@@ -2,11 +2,19 @@
 
 from fantasy_analyzer.league.players import resolve_player, resolve_roster_players
 from fantasy_analyzer.league.settings import LeagueSettings, normalize_league_settings
+from fantasy_analyzer.league.snapshot import (
+    LeagueSnapshot,
+    build_league_snapshot,
+    load_league_snapshot,
+)
 from fantasy_analyzer.league.teams import build_team_mapping
 
 __all__ = [
+    "build_league_snapshot",
     "build_team_mapping",
     "LeagueSettings",
+    "LeagueSnapshot",
+    "load_league_snapshot",
     "normalize_league_settings",
     "resolve_player",
     "resolve_roster_players",
