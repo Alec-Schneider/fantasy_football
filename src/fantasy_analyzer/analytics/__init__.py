@@ -1,5 +1,9 @@
 """Standings, head-to-head, all-play, luck, consistency, and power rankings."""
 
+from fantasy_analyzer.analytics.all_play import (
+    ALL_PLAY_STANDINGS_COLUMNS,
+    build_all_play_standings,
+)
 from fantasy_analyzer.analytics.head_to_head import (
     HEAD_TO_HEAD_COLUMNS,
     build_head_to_head_records,
@@ -33,6 +37,7 @@ from fantasy_analyzer.analytics.weekly_scores import (
 )
 
 __all__ = [
+    "build_all_play_standings",
     "build_league_summary",
     "build_scoring_summary",
     "build_standings",
@@ -42,6 +47,7 @@ __all__ = [
     "build_rivalry_records",
     "build_weekly_scoring_ranks",
     "format_head_to_head_matrix",
+    "ALL_PLAY_STANDINGS_COLUMNS",
     "HEAD_TO_HEAD_COLUMNS",
     "HEAD_TO_HEAD_MATRIX_DIAGONAL",
     "HEAD_TO_HEAD_MATRIX_NO_MEETING",
