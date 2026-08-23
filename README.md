@@ -43,3 +43,16 @@ Run lint/format checks:
 .venv/bin/ruff check .
 .venv/bin/ruff format --check .
 ```
+
+## CLI
+
+Once installed, a `fantasy-analyzer` console script is available for quick
+local inspection of a Sleeper league:
+
+```bash
+# Find your league_id by listing a user's leagues for a season.
+fantasy-analyzer leagues schneidbaby --season 2025
+
+# Print standings and scoring summary for a league.
+fantasy-analyzer summary <league_id> --total-weeks 18
+```

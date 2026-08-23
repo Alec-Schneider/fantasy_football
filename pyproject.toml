@@ -20,6 +20,9 @@ dev = [
     "requests-mock>=1.12",
 ]
 
+[project.scripts]
+fantasy-analyzer = "fantasy_analyzer.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
