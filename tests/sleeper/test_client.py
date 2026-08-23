@@ -205,6 +205,74 @@ def test_get_league_hits_expected_endpoint(
     assert league == fixture
 
 
+def test_get_league_surfaces_metadata(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    """League metadata needed for a LeagueSnapshot is present in the response."""
+    fixture = load_sleeper_fixture("league.json")
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(f"{SleeperClient.BASE_URL}/league/111", json=fixture)
+        league = client.get_league("111")
+
+    assert league["name"] == "Test League"
+    assert league["season"] == "2025"
+    assert league["status"] == "in_season"
+    assert league["total_rosters"] == 10
+
+
+def test_get_league_surfaces_rules_settings(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    """The league's ``settings`` block (waivers, playoffs, etc.) is present."""
+    fixture = load_sleeper_fixture("league.json")
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(f"{SleeperClient.BASE_URL}/league/111", json=fixture)
+        league = client.get_league("111")
+
+    settings = league["settings"]
+    assert settings["num_teams"] == 10
+    assert settings["playoff_teams"] == 6
+    assert settings["playoff_week_start"] == 15
+    assert "waiver_type" in settings
+    assert "trade_deadline" in settings
+
+
+def test_get_league_surfaces_scoring_settings(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    """The league's ``scoring_settings`` block is present with real categories."""
+    fixture = load_sleeper_fixture("league.json")
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(f"{SleeperClient.BASE_URL}/league/111", json=fixture)
+        league = client.get_league("111")
+
+    scoring_settings = league["scoring_settings"]
+    assert scoring_settings["pass_td"] == 4
+    assert scoring_settings["rec"] == 0.5
+    assert scoring_settings["rush_td"] == 6
+    assert scoring_settings["fum_lost"] == -2
+
+
+def test_get_league_surfaces_roster_positions(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    """The league's ``roster_positions`` list (starting slots + bench) is present."""
+    fixture = load_sleeper_fixture("league.json")
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(f"{SleeperClient.BASE_URL}/league/111", json=fixture)
+        league = client.get_league("111")
+
+    roster_positions = league["roster_positions"]
+    assert isinstance(roster_positions, list)
+    assert roster_positions.count("QB") == 1
+    assert roster_positions.count("BN") == 6
+    assert "FLEX" in roster_positions
+
+
 def test_get_rosters_hits_expected_endpoint(
     client: SleeperClient, load_sleeper_fixture
 ) -> None:
@@ -217,6 +285,25 @@ def test_get_rosters_hits_expected_endpoint(
     assert rosters == fixture
 
 
+def test_get_rosters_surfaces_roster_settings_and_owner_id(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    """Each roster exposes its owner_id (for linking to users) and record."""
+    fixture = load_sleeper_fixture("rosters.json")
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(f"{SleeperClient.BASE_URL}/league/111/rosters", json=fixture)
+        rosters = client.get_rosters("111")
+
+    for roster in rosters:
+        assert "roster_id" in roster
+        assert "owner_id" in roster
+        assert "players" in roster
+        assert "starters" in roster
+        record = roster["settings"]
+        assert {"wins", "losses", "ties"} <= record.keys()
+
+
 def test_get_users_hits_expected_endpoint(
     client: SleeperClient, load_sleeper_fixture
 ) -> None:
@@ -227,6 +314,39 @@ def test_get_users_hits_expected_endpoint(
         users = client.get_users("111")
 
     assert users == fixture
+
+
+def test_get_users_surfaces_owner_display_fields(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    """Each league user exposes the fields needed to label a roster's owner."""
+    fixture = load_sleeper_fixture("users.json")
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(f"{SleeperClient.BASE_URL}/league/111/users", json=fixture)
+        users = client.get_users("111")
+
+    for user in users:
+        assert "user_id" in user
+        assert "display_name" in user
+
+
+def test_roster_owner_id_links_to_league_user_id(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    """Roster owner_id values must resolve to a league user's user_id."""
+    rosters_fixture = load_sleeper_fixture("rosters.json")
+    users_fixture = load_sleeper_fixture("users.json")
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(f"{SleeperClient.BASE_URL}/league/111/rosters", json=rosters_fixture)
+        m.get(f"{SleeperClient.BASE_URL}/league/111/users", json=users_fixture)
+        rosters = client.get_rosters("111")
+        users = client.get_users("111")
+
+    user_ids = {user["user_id"] for user in users}
+    for roster in rosters:
+        assert roster["owner_id"] in user_ids
 
 
 def test_get_matchups_hits_expected_endpoint(

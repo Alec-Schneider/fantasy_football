@@ -2,14 +2,48 @@
   "league_id": "111111111111111111",
   "name": "Test League",
   "season": "2025",
+  "season_type": "regular",
+  "sport": "nfl",
   "status": "in_season",
   "total_rosters": 10,
-  "roster_positions": ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "BN", "BN"],
+  "draft_id": "999999999999999999",
+  "previous_league_id": "888888888888888888",
+  "roster_positions": [
+    "QB",
+    "RB",
+    "RB",
+    "WR",
+    "WR",
+    "TE",
+    "FLEX",
+    "DEF",
+    "K",
+    "BN",
+    "BN",
+    "BN",
+    "BN",
+    "BN",
+    "BN"
+  ],
   "scoring_settings": {
+    "pass_yd": 0.04,
     "pass_td": 4,
-    "rec": 0.5
+    "pass_int": -2,
+    "rush_yd": 0.1,
+    "rush_td": 6,
+    "rec": 0.5,
+    "rec_yd": 0.1,
+    "rec_td": 6,
+    "fum_lost": -2
   },
   "settings": {
-    "playoff_week_start": 15
+    "num_teams": 10,
+    "playoff_teams": 6,
+    "playoff_week_start": 15,
+    "waiver_type": 2,
+    "waiver_budget": 100,
+    "trade_deadline": 12,
+    "reserve_slots": 2,
+    "taxi_slots": 0
   }
 }
