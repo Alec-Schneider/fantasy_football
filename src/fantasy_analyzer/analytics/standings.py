@@ -50,6 +50,46 @@ makes **no** regular-season-vs-playoff distinction and cannot be made to;
 phase-specific standings/records require per-week, per-matchup data and are
 deferred to the matchup-level normalization work in Epic 4/5 (FFA-030
 onward), which has the week-level granularity needed to filter by phase.
+
+Scoring summary (FFA-021)
+--------------------------
+
+:func:`build_scoring_summary` extends the same season-cumulative
+``rosters_df``/``teams_df`` inputs with per-game scoring rate metrics.
+
+- **games played** -- ``wins + losses + ties`` (not a returned column, but
+  the shared denominator for the per-game metrics below). Same
+  cumulative-counter caveat as ``build_standings``: it is season-to-date and
+  does not distinguish regular season from playoffs.
+- **points per game** (``points_per_game``) -- ``points_for / games_played``.
+  A team with zero games played gets ``0.0`` rather than a
+  division-by-zero error or ``NaN`` -- the same explicit missing-value rule
+  used for ``win_pct`` in ``build_standings``.
+- **points against per game** (``points_against_per_game``) -- same pattern,
+  using ``points_against``; also ``0.0`` at zero games played.
+- **average margin** (``avg_margin``) -- ``point_diff / games_played``; also
+  ``0.0`` at zero games played.
+- **scoring rank** (``scoring_rank``) -- rank of teams by ``points_for``
+  descending, using the same standard competition ("1224") ranking
+  convention as ``build_standings.rank`` (documented above): tied
+  ``points_for`` values share a rank, and the next distinct rank skips the
+  number of tied teams.
+
+``high_score`` / ``low_score`` -- **not implemented, by design.** The ticket
+(FFA-021) calls for a team's single highest and lowest weekly scores.
+Sleeper's roster-level ``settings`` only exposes season-cumulative
+``fpts``/``fpts_against`` totals (see ``league/snapshot.py``), not a
+per-week score history, so there is no way to derive a single game's high
+or low from the data available to this module. Computing this requires
+per-week matchup data, which does not exist in this codebase yet (Epic 4 /
+FFA-030 onward). Rather than approximate or fabricate these values from the
+cumulative totals, ``build_scoring_summary`` omits ``high_score`` and
+``low_score`` entirely and this gap is called out explicitly. Revisit once
+FFA-033's season matchup DataFrame exists.
+
+Scoring summary does not distinguish regular season from playoffs, for the
+same reason as ``build_standings`` above -- Sleeper's roster counters are
+season-cumulative.
 """
 
 from __future__ import annotations
@@ -70,6 +110,18 @@ STANDINGS_COLUMNS = [
     "points_against",
     "point_diff",
     "rank",
+]
+
+#: Column order for the DataFrame returned by :func:`build_scoring_summary`.
+SCORING_SUMMARY_COLUMNS = [
+    "roster_id",
+    "owner_id",
+    "display_name",
+    "team_name",
+    "points_per_game",
+    "points_against_per_game",
+    "scoring_rank",
+    "avg_margin",
 ]
 
 
@@ -148,3 +200,110 @@ def build_standings(rosters_df: pd.DataFrame, teams_df: pd.DataFrame) -> pd.Data
     merged["rank"] = ranks
 
     return merged[STANDINGS_COLUMNS]
+
+
+def _games_played(wins: float, losses: float, ties: float) -> float:
+    """Return the shared per-game denominator: ``wins + losses + ties``."""
+    return (wins or 0) + (losses or 0) + (ties or 0)
+
+
+def _per_game(total: float, games_played: float) -> float:
+    """Divide ``total`` by ``games_played``, returning ``0.0`` at zero games.
+
+    Shared missing-value rule for ``points_per_game``,
+    ``points_against_per_game``, and ``avg_margin`` -- see the module
+    docstring's "Scoring summary" section.
+    """
+    if games_played == 0:
+        return 0.0
+    return total / games_played
+
+
+def build_scoring_summary(
+    rosters_df: pd.DataFrame, teams_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Build one row of season-to-date scoring-rate metrics per team.
+
+    Joins ``rosters_df`` (Sleeper's cumulative per-roster points and
+    win/loss/tie counters) to ``teams_df`` (roster-to-owner/display-name
+    labels) on ``roster_id``, then computes ``points_per_game``,
+    ``points_against_per_game``, ``avg_margin``, and ``scoring_rank``. See
+    the module docstring's "Scoring summary (FFA-021)" section for exact
+    metric definitions, the zero-games edge case, the ranking rule, and why
+    ``high_score``/``low_score`` are not included.
+
+    Args:
+        rosters_df: A ``LeagueSnapshot.rosters_df``-shaped DataFrame with at
+            least ``["roster_id", "wins", "losses", "ties", "fpts",
+            "fpts_against"]``.
+        teams_df: A ``LeagueSnapshot.teams_df``-shaped DataFrame with at
+            least ``["roster_id", "owner_id", "display_name",
+            "team_name"]``.
+
+    Returns:
+        A DataFrame with columns ``["roster_id", "owner_id",
+        "display_name", "team_name", "points_per_game",
+        "points_against_per_game", "scoring_rank", "avg_margin"]``, one row
+        per roster, sorted by descending ``points_per_game``.
+        ``scoring_rank`` is 1-indexed standard competition ranking based on
+        cumulative ``points_for`` (ties share a rank; the next rank skips
+        accordingly).
+
+        If either input is empty, an empty DataFrame with the expected
+        columns is returned.
+    """
+    if rosters_df.empty or teams_df.empty:
+        return pd.DataFrame(columns=SCORING_SUMMARY_COLUMNS)
+
+    merged = rosters_df.merge(
+        teams_df[["roster_id", "owner_id", "display_name", "team_name"]],
+        on="roster_id",
+        how="left",
+        suffixes=("", "_team"),
+    )
+
+    merged["points_for"] = merged["fpts"]
+    merged["points_against"] = merged["fpts_against"]
+    merged["_games_played"] = merged.apply(
+        lambda row: _games_played(row["wins"], row["losses"], row["ties"]), axis=1
+    )
+    merged["points_per_game"] = merged.apply(
+        lambda row: _per_game(row["points_for"], row["_games_played"]), axis=1
+    )
+    merged["points_against_per_game"] = merged.apply(
+        lambda row: _per_game(row["points_against"], row["_games_played"]), axis=1
+    )
+    merged["avg_margin"] = merged.apply(
+        lambda row: _per_game(
+            row["points_for"] - row["points_against"], row["_games_played"]
+        ),
+        axis=1,
+    )
+
+    merged = merged.sort_values(by=["points_per_game"], ascending=[False]).reset_index(
+        drop=True
+    )
+
+    # scoring_rank is based on cumulative points_for, not points_per_game --
+    # same standard competition ("1224") ranking convention as
+    # build_standings.rank.
+    rank_source = rosters_df[["roster_id", "fpts"]].rename(
+        columns={"fpts": "points_for"}
+    )
+    rank_source = rank_source.sort_values(
+        by=["points_for"], ascending=[False]
+    ).reset_index(drop=True)
+
+    ranks_by_roster: dict = {}
+    current_rank = 0
+    previous_key = None
+    for position, row in enumerate(rank_source.itertuples(index=False), start=1):
+        key = row.points_for
+        if key != previous_key:
+            current_rank = position
+            previous_key = key
+        ranks_by_roster[row.roster_id] = current_rank
+
+    merged["scoring_rank"] = merged["roster_id"].map(ranks_by_roster)
+
+    return merged[SCORING_SUMMARY_COLUMNS]
