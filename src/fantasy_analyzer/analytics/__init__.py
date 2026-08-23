@@ -11,6 +11,11 @@ from fantasy_analyzer.analytics.head_to_head_matrix import (
     build_head_to_head_matrix,
     format_head_to_head_matrix,
 )
+from fantasy_analyzer.analytics.rivalries import (
+    RIVALRY_COLUMNS,
+    RivalryGame,
+    build_rivalry_records,
+)
 from fantasy_analyzer.analytics.standings import build_scoring_summary, build_standings
 from fantasy_analyzer.analytics.summary import (
     LeagueSummary,
@@ -24,6 +29,7 @@ __all__ = [
     "build_standings",
     "build_head_to_head_records",
     "build_head_to_head_matrix",
+    "build_rivalry_records",
     "format_head_to_head_matrix",
     "HEAD_TO_HEAD_COLUMNS",
     "HEAD_TO_HEAD_MATRIX_DIAGONAL",
@@ -31,4 +37,6 @@ __all__ = [
     "HeadToHeadCell",
     "LeagueSummary",
     "LeagueSummaryView",
+    "RIVALRY_COLUMNS",
+    "RivalryGame",
 ]
