@@ -15,6 +15,10 @@ from fantasy_analyzer.matchups.pairing import (
     pair_season_matchups,
     pair_week_matchups,
 )
+from fantasy_analyzer.matchups.season_matchups import (
+    SEASON_MATCHUP_COLUMNS,
+    build_season_matchup_df,
+)
 
 __all__ = [
     "collect_season_matchups",
@@ -26,4 +30,6 @@ __all__ = [
     "MatchupOutcome",
     "derive_matchup_outcome",
     "derive_season_outcomes",
+    "SEASON_MATCHUP_COLUMNS",
+    "build_season_matchup_df",
 ]
