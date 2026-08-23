@@ -123,11 +123,36 @@ def test_get_user_returns_user(client: SleeperClient, load_sleeper_fixture) -> N
     assert user["user_id"] == "123456789012345678"
 
 
-def test_get_user_raises_for_missing_user(client: SleeperClient) -> None:
-    with requests_mock_lib.Mocker() as m:
-        m.get(f"{SleeperClient.BASE_URL}/user/doesnotexist", json=None)
+def test_get_user_resolves_username_to_permanent_user_id(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    """A mutable username should resolve to Sleeper's immutable user_id."""
+    fixture = load_sleeper_fixture("user.json")
 
-        with pytest.raises(ValueError):
+    with requests_mock_lib.Mocker() as m:
+        m.get(f"{SleeperClient.BASE_URL}/user/testuser", json=fixture)
+        user = client.get_user("testuser")
+
+    assert isinstance(user["user_id"], str)
+    assert user["user_id"] != ""
+    # The username itself is just a mutable label -- it must not be used
+    # as a stand-in for user_id anywhere downstream.
+    assert user["user_id"] != user["username"]
+
+
+def test_get_user_raises_for_missing_user(client: SleeperClient) -> None:
+    """Sleeper returns HTTP 200 with a literal JSON ``null`` body for unknown
+    usernames (not a 404), so ``get_user`` must treat that case explicitly.
+    """
+    with requests_mock_lib.Mocker() as m:
+        m.get(
+            f"{SleeperClient.BASE_URL}/user/doesnotexist",
+            status_code=200,
+            text="null",
+            headers={"Content-Type": "application/json"},
+        )
+
+        with pytest.raises(ValueError, match="doesnotexist"):
             client.get_user("doesnotexist")
 
 
@@ -144,6 +169,28 @@ def test_get_leagues_hits_expected_endpoint(
         leagues = client.get_leagues(user_id="123", season=2025)
 
     assert leagues == fixture
+
+
+def test_get_leagues_for_2025_season_returns_league_list(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    """2025 leagues for a user_id can be retrieved as a list of league dicts."""
+    fixture = load_sleeper_fixture("leagues.json")
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(
+            f"{SleeperClient.BASE_URL}/user/123456789012345678/leagues/nfl/2025",
+            json=fixture,
+        )
+        leagues = client.get_leagues(user_id="123456789012345678", season=2025)
+
+    assert isinstance(leagues, list)
+    assert len(leagues) > 0
+    for league in leagues:
+        assert isinstance(league, dict)
+        assert league["season"] == "2025"
+        assert "league_id" in league
+        assert "name" in league
 
 
 def test_get_league_hits_expected_endpoint(
