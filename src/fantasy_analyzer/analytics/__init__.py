@@ -27,6 +27,10 @@ from fantasy_analyzer.analytics.summary import (
     LeagueSummaryView,
     build_league_summary,
 )
+from fantasy_analyzer.analytics.weekly_scores import (
+    WEEKLY_SCORING_RANK_COLUMNS,
+    build_weekly_scoring_ranks,
+)
 
 __all__ = [
     "build_league_summary",
@@ -36,6 +40,7 @@ __all__ = [
     "build_head_to_head_matrix",
     "build_matchup_history",
     "build_rivalry_records",
+    "build_weekly_scoring_ranks",
     "format_head_to_head_matrix",
     "HEAD_TO_HEAD_COLUMNS",
     "HEAD_TO_HEAD_MATRIX_DIAGONAL",
@@ -47,4 +52,5 @@ __all__ = [
     "MatchupHistory",
     "RIVALRY_COLUMNS",
     "RivalryGame",
+    "WEEKLY_SCORING_RANK_COLUMNS",
 ]
