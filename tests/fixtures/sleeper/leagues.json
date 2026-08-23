@@ -1,0 +1,9 @@
+[
+  {
+    "league_id": "111111111111111111",
+    "name": "Test League",
+    "season": "2025",
+    "status": "in_season",
+    "total_rosters": 10
+  }
+]

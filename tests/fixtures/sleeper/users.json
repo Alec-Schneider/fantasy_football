@@ -1,0 +1,14 @@
+[
+  {
+    "user_id": "123456789012345678",
+    "username": "testuser",
+    "display_name": "Test User",
+    "metadata": {"team_name": "The Testers"}
+  },
+  {
+    "user_id": "223456789012345678",
+    "username": "otheruser",
+    "display_name": "Other User",
+    "metadata": {}
+  }
+]

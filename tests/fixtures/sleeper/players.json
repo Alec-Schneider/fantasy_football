@@ -1,0 +1,14 @@
+{
+  "1000": {
+    "player_id": "1000",
+    "full_name": "Test Player One",
+    "position": "QB",
+    "team": "SEA"
+  },
+  "1002": {
+    "player_id": "1002",
+    "full_name": "Test Player Two",
+    "position": "RB",
+    "team": "KC"
+  }
+}

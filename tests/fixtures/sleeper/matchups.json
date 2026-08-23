@@ -1,0 +1,14 @@
+[
+  {
+    "roster_id": 1,
+    "matchup_id": 1,
+    "points": 123.45,
+    "starters": ["1000"]
+  },
+  {
+    "roster_id": 2,
+    "matchup_id": 1,
+    "points": 110.2,
+    "starters": ["1002"]
+  }
+]
