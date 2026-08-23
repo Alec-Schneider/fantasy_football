@@ -1,6 +1,11 @@
 """League normalization, owner/roster mappings, league snapshots."""
 
 from fantasy_analyzer.league.players import resolve_player, resolve_roster_players
+from fantasy_analyzer.league.season import (
+    SeasonBoundaries,
+    derive_season_boundaries,
+    is_playoff_week,
+)
 from fantasy_analyzer.league.settings import LeagueSettings, normalize_league_settings
 from fantasy_analyzer.league.snapshot import (
     LeagueSnapshot,
@@ -12,10 +17,13 @@ from fantasy_analyzer.league.teams import build_team_mapping
 __all__ = [
     "build_league_snapshot",
     "build_team_mapping",
+    "derive_season_boundaries",
+    "is_playoff_week",
     "LeagueSettings",
     "LeagueSnapshot",
     "load_league_snapshot",
     "normalize_league_settings",
     "resolve_player",
     "resolve_roster_players",
+    "SeasonBoundaries",
 ]
