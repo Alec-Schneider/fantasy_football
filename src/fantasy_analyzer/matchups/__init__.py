@@ -5,9 +5,17 @@ from fantasy_analyzer.matchups.loader import (
     collect_season_matchups,
     load_season_matchups,
 )
+from fantasy_analyzer.matchups.pairing import (
+    MatchupPairing,
+    pair_season_matchups,
+    pair_week_matchups,
+)
 
 __all__ = [
     "collect_season_matchups",
     "load_season_matchups",
     "WeekMatchups",
+    "MatchupPairing",
+    "pair_season_matchups",
+    "pair_week_matchups",
 ]
