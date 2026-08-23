@@ -361,6 +361,144 @@ def test_get_matchups_hits_expected_endpoint(
     assert matchups == fixture
 
 
+def test_get_winners_bracket_hits_expected_endpoint(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    fixture = load_sleeper_fixture("winners_bracket.json")
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(f"{SleeperClient.BASE_URL}/league/111/winners_bracket", json=fixture)
+        bracket = client.get_winners_bracket("111")
+
+    assert bracket == fixture
+
+
+def test_get_winners_bracket_surfaces_matchup_structure(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    """Bracket matchups expose round, matchup id, and participant roster ids."""
+    fixture = load_sleeper_fixture("winners_bracket.json")
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(f"{SleeperClient.BASE_URL}/league/111/winners_bracket", json=fixture)
+        bracket = client.get_winners_bracket("111")
+
+    for matchup in bracket:
+        assert {"r", "m", "t1", "t2"} <= matchup.keys()
+
+    # The championship game carries a placement marker.
+    championship = [m_ for m_ in bracket if m_.get("p") == 1]
+    assert len(championship) == 1
+
+
+def test_get_losers_bracket_hits_expected_endpoint(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    fixture = load_sleeper_fixture("losers_bracket.json")
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(f"{SleeperClient.BASE_URL}/league/111/losers_bracket", json=fixture)
+        bracket = client.get_losers_bracket("111")
+
+    assert bracket == fixture
+
+
+def test_get_transactions_hits_expected_endpoint(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    fixture = load_sleeper_fixture("transactions.json")
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(f"{SleeperClient.BASE_URL}/league/111/transactions/3", json=fixture)
+        transactions = client.get_transactions("111", week=3)
+
+    assert transactions == fixture
+
+
+def test_get_transactions_covers_representative_types(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    """Waiver, free-agent, and trade transactions all parse from the fixture."""
+    fixture = load_sleeper_fixture("transactions.json")
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(f"{SleeperClient.BASE_URL}/league/111/transactions/3", json=fixture)
+        transactions = client.get_transactions("111", week=3)
+
+    types = {txn["type"] for txn in transactions}
+    assert types == {"waiver", "free_agent", "trade"}
+
+    for txn in transactions:
+        assert "transaction_id" in txn
+        assert "roster_ids" in txn
+        assert "status" in txn
+
+    # A free-agent add may have no corresponding drop.
+    free_agent = next(t for t in transactions if t["type"] == "free_agent")
+    assert free_agent["drops"] is None
+
+
+def test_get_drafts_hits_expected_endpoint(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    fixture = load_sleeper_fixture("drafts.json")
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(f"{SleeperClient.BASE_URL}/league/111/drafts", json=fixture)
+        drafts = client.get_drafts("111")
+
+    assert drafts == fixture
+
+
+def test_get_drafts_surfaces_draft_metadata(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    """Each draft exposes its id, type, status, and slot-to-roster mapping."""
+    fixture = load_sleeper_fixture("drafts.json")
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(f"{SleeperClient.BASE_URL}/league/111/drafts", json=fixture)
+        drafts = client.get_drafts("111")
+
+    for draft in drafts:
+        assert "draft_id" in draft
+        assert draft["type"] == "snake"
+        assert draft["status"] == "complete"
+        assert "slot_to_roster_id" in draft
+
+
+def test_get_draft_picks_hits_expected_endpoint(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    fixture = load_sleeper_fixture("draft_picks.json")
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(f"{SleeperClient.BASE_URL}/draft/999/picks", json=fixture)
+        picks = client.get_draft_picks("999")
+
+    assert picks == fixture
+
+
+def test_get_draft_picks_surfaces_pick_details(
+    client: SleeperClient, load_sleeper_fixture
+) -> None:
+    """Each pick links a player_id to a roster_id with round/pick ordering."""
+    fixture = load_sleeper_fixture("draft_picks.json")
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(f"{SleeperClient.BASE_URL}/draft/999/picks", json=fixture)
+        picks = client.get_draft_picks("999")
+
+    pick_numbers = [pick["pick_no"] for pick in picks]
+    assert pick_numbers == sorted(pick_numbers)
+
+    for pick in picks:
+        assert "round" in pick
+        assert "player_id" in pick
+        assert "roster_id" in pick
+        assert "picked_by" in pick
+
+
 def test_get_players_hits_expected_endpoint(
     client: SleeperClient, load_sleeper_fixture
 ) -> None:

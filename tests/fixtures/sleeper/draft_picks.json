@@ -1,0 +1,62 @@
+[
+  {
+    "draft_id": "999999999999999999",
+    "round": 1,
+    "pick_no": 1,
+    "draft_slot": 1,
+    "roster_id": 1,
+    "picked_by": "123456789012345678",
+    "player_id": "1000",
+    "is_keeper": null,
+    "metadata": {
+      "first_name": "Test",
+      "last_name": "Playerone",
+      "position": "RB",
+      "team": "TST",
+      "status": "Active",
+      "injury_status": "",
+      "years_exp": "4",
+      "player_id": "1000"
+    }
+  },
+  {
+    "draft_id": "999999999999999999",
+    "round": 1,
+    "pick_no": 2,
+    "draft_slot": 2,
+    "roster_id": 2,
+    "picked_by": "223456789012345678",
+    "player_id": "2000",
+    "is_keeper": null,
+    "metadata": {
+      "first_name": "Test",
+      "last_name": "Playertwo",
+      "position": "WR",
+      "team": "TST",
+      "status": "Active",
+      "injury_status": "",
+      "years_exp": "2",
+      "player_id": "2000"
+    }
+  },
+  {
+    "draft_id": "999999999999999999",
+    "round": 2,
+    "pick_no": 3,
+    "draft_slot": 2,
+    "roster_id": 2,
+    "picked_by": "223456789012345678",
+    "player_id": "2001",
+    "is_keeper": null,
+    "metadata": {
+      "first_name": "Test",
+      "last_name": "Playerthree",
+      "position": "QB",
+      "team": "TST",
+      "status": "Active",
+      "injury_status": "",
+      "years_exp": "6",
+      "player_id": "2001"
+    }
+  }
+]

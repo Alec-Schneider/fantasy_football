@@ -100,6 +100,38 @@ class SleeperClient:
         return self._get(f"league/{league_id}/matchups/{week}")
 
     # -------------------------
+    # Playoff brackets
+    # -------------------------
+
+    def get_winners_bracket(self, league_id: str) -> list[dict]:
+        """Get the playoff winners bracket for a league."""
+        return self._get(f"league/{league_id}/winners_bracket")
+
+    def get_losers_bracket(self, league_id: str) -> list[dict]:
+        """Get the playoff losers (consolation) bracket for a league."""
+        return self._get(f"league/{league_id}/losers_bracket")
+
+    # -------------------------
+    # Transactions
+    # -------------------------
+
+    def get_transactions(self, league_id: str, week: int) -> list[dict]:
+        """Get league transactions (trades, waivers, free agents) for a week."""
+        return self._get(f"league/{league_id}/transactions/{week}")
+
+    # -------------------------
+    # Drafts
+    # -------------------------
+
+    def get_drafts(self, league_id: str) -> list[dict]:
+        """Get all drafts for a league."""
+        return self._get(f"league/{league_id}/drafts")
+
+    def get_draft_picks(self, draft_id: str) -> list[dict]:
+        """Get every pick made in a draft."""
+        return self._get(f"draft/{draft_id}/picks")
+
+    # -------------------------
     # Players
     # -------------------------
 

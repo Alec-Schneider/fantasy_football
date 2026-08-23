@@ -1,0 +1,36 @@
+[
+  {
+    "draft_id": "999999999999999999",
+    "league_id": "111111111111111111",
+    "type": "snake",
+    "status": "complete",
+    "sport": "nfl",
+    "season": "2025",
+    "season_type": "regular",
+    "start_time": 1756150000000,
+    "created": 1755000000000,
+    "last_picked": 1756160000000,
+    "settings": {
+      "teams": 10,
+      "rounds": 15,
+      "pick_timer": 90,
+      "reversal_round": 0,
+      "cpu_autopick": 1,
+      "alpha_sort": 0
+    },
+    "metadata": {
+      "scoring_type": "half_ppr",
+      "name": "Test League Draft",
+      "description": ""
+    },
+    "draft_order": {
+      "123456789012345678": 1,
+      "223456789012345678": 2
+    },
+    "slot_to_roster_id": {
+      "1": 1,
+      "2": 2
+    },
+    "creators": null
+  }
+]
