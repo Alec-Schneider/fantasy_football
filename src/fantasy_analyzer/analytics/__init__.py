@@ -35,6 +35,10 @@ from fantasy_analyzer.analytics.schedule_luck import (
     build_schedule_luck,
 )
 from fantasy_analyzer.analytics.standings import build_scoring_summary, build_standings
+from fantasy_analyzer.analytics.strength_of_schedule import (
+    STRENGTH_OF_SCHEDULE_COLUMNS,
+    build_strength_of_schedule,
+)
 from fantasy_analyzer.analytics.summary import (
     LeagueSummary,
     LeagueSummaryView,
@@ -56,6 +60,7 @@ __all__ = [
     "build_matchup_history",
     "build_rivalry_records",
     "build_schedule_luck",
+    "build_strength_of_schedule",
     "build_weekly_scoring_ranks",
     "format_head_to_head_matrix",
     "ALL_PLAY_STANDINGS_COLUMNS",
@@ -72,5 +77,6 @@ __all__ = [
     "RIVALRY_COLUMNS",
     "RivalryGame",
     "SCHEDULE_LUCK_COLUMNS",
+    "STRENGTH_OF_SCHEDULE_COLUMNS",
     "WEEKLY_SCORING_RANK_COLUMNS",
 ]
