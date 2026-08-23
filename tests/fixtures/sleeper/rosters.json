@@ -5,7 +5,15 @@
     "players": ["1000", "1001"],
     "starters": ["1000"],
     "reserve": [],
-    "settings": {"wins": 5, "losses": 3, "ties": 0}
+    "settings": {
+      "wins": 5,
+      "losses": 3,
+      "ties": 0,
+      "fpts": 1050,
+      "fpts_decimal": 42,
+      "fpts_against": 980,
+      "fpts_against_decimal": 15
+    }
   },
   {
     "roster_id": 2,
@@ -13,6 +21,14 @@
     "players": ["1002"],
     "starters": ["1002"],
     "reserve": [],
-    "settings": {"wins": 4, "losses": 4, "ties": 0}
+    "settings": {
+      "wins": 4,
+      "losses": 4,
+      "ties": 0,
+      "fpts": 975,
+      "fpts_decimal": 30,
+      "fpts_against": 968,
+      "fpts_against_decimal": 88
+    }
   }
 ]

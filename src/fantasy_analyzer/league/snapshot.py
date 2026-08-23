@@ -35,6 +35,7 @@ ROSTERS_COLUMNS = [
     "losses",
     "ties",
     "fpts",
+    "fpts_against",
     "players",
     "starters",
 ]
@@ -56,8 +57,9 @@ class LeagueSnapshot:
         users_df: One row per league user with columns
             ``["user_id", "display_name", "team_name"]``.
         rosters_df: One row per roster with columns ``["roster_id",
-            "owner_id", "wins", "losses", "ties", "fpts", "players",
-            "starters"]``.
+            "owner_id", "wins", "losses", "ties", "fpts", "fpts_against",
+            "players", "starters"]``. ``fpts`` and ``fpts_against`` are
+            combined floats -- see :func:`_combine_points_setting`.
         players_df: One row per distinct player ID appearing on any roster
             in the league, resolved via :func:`resolve_roster_players`.
         scoring_settings: Convenience passthrough of
@@ -93,6 +95,28 @@ def _normalize_users_df(raw_users: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=USERS_COLUMNS)
 
 
+def _combine_points_setting(
+    whole: Union[int, float, None], decimal: Union[int, float, None]
+) -> Union[float, None]:
+    """Combine Sleeper's split whole/decimal points settings into one float.
+
+    Sleeper stores cumulative points (both ``fpts``/``fpts_decimal`` for
+    points for, and ``fpts_against``/``fpts_against_decimal`` for points
+    against) as a whole-number field plus a separate decimal field holding
+    the fractional part as an integer 0-99 (e.g. ``fpts=1050,
+    fpts_decimal=42`` means 1050.42 points). This combines the pair into a
+    single float: ``whole + decimal / 100``.
+
+    If ``whole`` is missing (``None``), the setting is considered entirely
+    absent and ``None`` is returned -- this is the explicit missing-value
+    rule, distinct from a real zero. If ``decimal`` is missing but ``whole``
+    is present, the decimal part defaults to 0.
+    """
+    if whole is None:
+        return None
+    return whole + (decimal or 0) / 100
+
+
 def _normalize_rosters_df(raw_rosters: list[dict]) -> pd.DataFrame:
     """Normalize raw Sleeper rosters into a minimal, predictable DataFrame."""
     rows = []
@@ -106,7 +130,12 @@ def _normalize_rosters_df(raw_rosters: list[dict]) -> pd.DataFrame:
                 "wins": settings.get("wins"),
                 "losses": settings.get("losses"),
                 "ties": settings.get("ties"),
-                "fpts": settings.get("fpts"),
+                "fpts": _combine_points_setting(
+                    settings.get("fpts"), settings.get("fpts_decimal")
+                ),
+                "fpts_against": _combine_points_setting(
+                    settings.get("fpts_against"), settings.get("fpts_against_decimal")
+                ),
                 "players": list(roster.get("players") or []),
                 "starters": list(roster.get("starters") or []),
             }

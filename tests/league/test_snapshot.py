@@ -89,6 +89,7 @@ def test_build_league_snapshot_rosters_df(load_sleeper_fixture) -> None:
         "losses",
         "ties",
         "fpts",
+        "fpts_against",
         "players",
         "starters",
     ]
@@ -98,6 +99,10 @@ def test_build_league_snapshot_rosters_df(load_sleeper_fixture) -> None:
     assert row["wins"] == 5
     assert row["losses"] == 3
     assert row["ties"] == 0
+    # settings.fpts=1050, fpts_decimal=42 -> 1050 + 42/100 = 1050.42.
+    assert row["fpts"] == 1050.42
+    # settings.fpts_against=980, fpts_against_decimal=15 -> 980 + 15/100 = 980.15.
+    assert row["fpts_against"] == 980.15
     assert row["players"] == ["1000", "1001"]
     assert row["starters"] == ["1000"]
 
