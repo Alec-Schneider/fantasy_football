@@ -86,13 +86,25 @@ Regular season vs. playoffs
 
 This function combines **all** ``season_matchup_df`` rows -- regular season
 and playoff alike -- into a single combined head-to-head record. It makes
-**no** ``is_playoff`` distinction and must not be called with a
-pre-filtered, phase-only subset if a combined record is what is wanted.
-Splitting the head-to-head record by season phase (regular season only,
-playoffs only) is explicitly deferred to FFA-044 ("Split Regular Season and
-Playoff H2H"), a separate, later ticket -- this mirrors
-``reconciliation.py``'s and ``standings.py``'s existing precedent of stating
-the regular-season/playoff scope explicitly rather than leaving it implicit.
+**no** ``is_playoff`` distinction of its own and applies no phase filter
+internally; a caller who wants a phase-scoped record pre-filters
+``season_matchup_df`` on ``is_playoff`` before calling, exactly as
+``power_rankings.py``/``schedule_luck.py``/``strength_of_schedule.py`` do.
+This function's own signature and behavior are unchanged by FFA-044
+("Split Regular Season and Playoff H2H"): it must not be called with a
+pre-filtered, phase-only subset if a combined record is what is wanted, and
+it still must not be called with a phase-only subset *implicitly* believing
+that changes what "combined" means here.
+
+FFA-044 adds the regular-season/playoff split as a layer *above* this
+function rather than inside it, to avoid duplicating an ``is_playoff``
+filter into every low-level builder that would otherwise need one. See
+:class:`~fantasy_analyzer.analytics.matchup_history.MatchupHistory`'s
+``regular_season_head_to_head_df``/``playoff_head_to_head_df`` attributes
+and its ``head_to_head_by_phase`` method, which call this function twice
+against two pre-filtered slices of ``season_matchup_df`` -- one for
+``is_playoff == False``, one for ``is_playoff == True`` -- rather than
+adding a ``phase`` parameter here.
 
 Owner resolution
 -----------------
