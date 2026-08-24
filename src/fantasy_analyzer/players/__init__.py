@@ -59,6 +59,11 @@ from fantasy_analyzer.players.position_strength import (
     POSITION_STRENGTH_COLUMNS,
     build_position_strength_metrics,
 )
+from fantasy_analyzer.players.projections import (
+    PROJECTION_IDENTITY_COLUMNS,
+    ProjectionProvider,
+    validate_projection_columns,
+)
 from fantasy_analyzer.players.provider import (
     PLAYER_WEEK_IDENTITY_COLUMNS,
     PlayerStatsProvider,
@@ -74,6 +79,9 @@ __all__ = [
     "PLAYER_WEEK_IDENTITY_COLUMNS",
     "PlayerStatsProvider",
     "validate_player_week_columns",
+    "PROJECTION_IDENTITY_COLUMNS",
+    "ProjectionProvider",
+    "validate_projection_columns",
     "NflverseClient",
     "NflverseWeeklyStatsProvider",
     "RAW_STAT_COLUMNS",
