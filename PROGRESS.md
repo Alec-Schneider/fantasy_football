@@ -807,3 +807,25 @@ analysis.position_summary_df
 analysis.roster_efficiency_df
 analysis.player_value_df
 ```
+
+---
+
+### FFA-072 — Projection and Ranking Provider Interface
+**Commit:** `7d314af` `feat: add projection and ranking provider interface`
+**Owner:** Data Engineer
+**Depends on:** FFA-071
+
+**Verification note:** Implemented in `src/fantasy_analyzer/players/projections.py`, the FFA-072 analog of FFA-060's `provider.py`: a `@runtime_checkable` `Protocol` (`ProjectionProvider`, not `abc.ABC`, for the same cross-role/no-inheritance reasons documented in `provider.py`) exposing one method, `projections(season, week) -> pd.DataFrame`, mirroring `weekly_stats(season, week)`'s per-week scope. `PROJECTION_IDENTITY_COLUMNS` requires `season`, `week`, `source`, `sleeper_player_id`, `gsis_id`, `player_name`, `position`, `nfl_team` as an ordered prefix — one column beyond `PLAYER_WEEK_IDENTITY_COLUMNS`: `source`, added because (unlike an observed stat) a projection is inherently one vendor/methodology's opinion, so multiple providers' rows need to coexist without colliding on `(season, week, sleeper_player_id)`. No projection-value column (e.g. `projected_points`) is required, matching FFA-060's exclusion of stat columns, per the ticket's "do not implement vendor-specific logic" instruction. `validate_projection_columns(df)` mirrors `validate_player_week_columns`. The module defines only the single per-week projection lookup; it does not implement ROS rankings, waiver recommendations, trade values, start/sit recommendations, or opponent-adjustment methodology — the module docstring documents, without implementing, how each of those five would consume `projections()` output in a future ticket (e.g. ROS rankings would call `projections()` across remaining weeks and aggregate; opponent adjustments could ride on an optional, unconstrained provider-specific column). Missing-value and empty-result conventions (an unpublished season/week returns an empty, correctly-columned DataFrame; `sleeper_player_id`/`gsis_id` may be `None` per row; a player with no projection has no row, not a sentinel row) mirror FFA-060 exactly. 10 new tests in `tests/players/test_projections.py` (protocol conformance via a plain `FakeProjectionProvider` with no inheritance, week filtering, required-columns-present, missing `sleeper_player_id`, empty-result shape, no-row-for-unprojected-player, the `source` column, and `validate_projection_columns`'s accept/reject behavior including out-of-order and missing-column cases); full suite passes (610 tests) and `ruff check src tests` is clean. No network access anywhere in the module or its tests. Nothing on the current kanban board lists FFA-072 as a dependency, so completing it does not unblock any other ticket; FFA-044, FFA-069, and FFA-070 remain the unblocked-on-paper BACKLOG tickets.
+
+**Goal**
+
+Enable future:
+
+- projections
+- rest-of-season rankings
+- waiver recommendations
+- trade values
+- start/sit recommendations
+- opponent adjustments
+
+Do not implement vendor-specific logic until the interface is stable.

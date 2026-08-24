@@ -451,6 +451,7 @@ feat: split head-to-head results by season phase
 - **FFA-067** — Optimal Lineup and Roster Efficiency — DONE (`e619eb7`) — see PROGRESS.md
 - **FFA-068** — Replacement-Level Player Value — DONE (`eff25d7`, hardened `b18c5e0`) — see PROGRESS.md
 - **FFA-071** — Player Analytics API — DONE (`6771979`) — see PROGRESS.md
+- **FFA-072** — Projection and Ranking Provider Interface — DONE (`7d314af`) — see PROGRESS.md
 
 ## FFA-069 — Matchup Player Contribution Analysis
 
@@ -493,33 +494,6 @@ Analyze:
 - start/sit tendencies
 - waiver-player utilization
 - positional preferences
-
----
-
-## FFA-072 — Projection and Ranking Provider Interface
-
-**Status:** READY  
-**Owner:** Data Engineer  
-**Depends on:** FFA-071
-
-**Suggested commit:**
-
-```text
-feat: add projection and ranking provider interface
-```
-
-### Goal
-
-Enable future:
-
-- projections
-- rest-of-season rankings
-- waiver recommendations
-- trade values
-- start/sit recommendations
-- opponent adjustments
-
-Do not implement vendor-specific logic until the interface is stable.
 
 ---
 
@@ -644,10 +618,7 @@ Part 7 should begin only after league-specific scoring and matchup structures ar
 
 ## READY
 
-### FFA-072 — Projection and Ranking Provider Interface
-
-Its dependency, FFA-071, is DONE. This is the next ticket in the recommended
-sequence.
+None.
 
 ---
 
@@ -682,7 +653,8 @@ None.
 
 ## DONE
 
-FFA-001 through FFA-057, FFA-060 through FFA-068, FFA-071 — see PROGRESS.md.
+FFA-001 through FFA-057, FFA-060 through FFA-068, FFA-071, FFA-072 — see
+PROGRESS.md.
 
 ---
 
