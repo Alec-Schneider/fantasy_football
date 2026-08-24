@@ -6,6 +6,12 @@ from fantasy_analyzer.players.crosswalk import (
     gsis_to_sleeper_lookup,
     sleeper_to_gsis_lookup,
 )
+from fantasy_analyzer.players.lineup_efficiency import (
+    LINEUP_EFFICIENCY_COLUMNS,
+    ROSTER_EFFICIENCY_COLUMNS,
+    build_lineup_efficiency_metrics,
+    build_roster_efficiency_metrics,
+)
 from fantasy_analyzer.players.nflverse_cache import (
     DEFAULT_CACHE_PATH as NFLVERSE_DEFAULT_CACHE_PATH,
 )
@@ -86,4 +92,8 @@ __all__ = [
     "MIN_WEEKS_FOR_DISPERSION",
     "MIN_WEEKS_FOR_BOOM_BUST",
     "build_position_strength_metrics",
+    "LINEUP_EFFICIENCY_COLUMNS",
+    "ROSTER_EFFICIENCY_COLUMNS",
+    "build_lineup_efficiency_metrics",
+    "build_roster_efficiency_metrics",
 ]
