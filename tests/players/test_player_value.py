@@ -587,6 +587,32 @@ def test_empty_input_returns_empty_frames_with_columns() -> None:
     assert list(scarcity_df.columns) == POSITION_SCARCITY_COLUMNS
 
 
+def test_empty_frames_carry_the_documented_dtypes() -> None:
+    """Empty results must match the non-empty dtype contract per column, so
+    concatenating an empty result with a full one never upcasts (a bare
+    ``pd.DataFrame(columns=...)`` is all-object).
+    """
+    empty_player = build_player_value_metrics(_df([]), ROSTER_POSITIONS, NUM_TEAMS)
+    full_player = build_player_value_metrics(
+        _df(_toy_rows()), ROSTER_POSITIONS, NUM_TEAMS
+    )
+    empty_scarcity = build_position_scarcity_metrics(
+        _df([]), ROSTER_POSITIONS, NUM_TEAMS
+    )
+    full_scarcity = build_position_scarcity_metrics(
+        _df(_toy_rows()), ROSTER_POSITIONS, NUM_TEAMS
+    )
+
+    assert (empty_player.dtypes == full_player.dtypes).all()
+    assert (empty_scarcity.dtypes == full_scarcity.dtypes).all()
+    # Spot-check the headline contract on the empty frames themselves.
+    assert empty_player["season"].dtype == "int64"
+    assert empty_player["value_rank"].dtype == "int64"
+    assert empty_player["points_above_replacement"].dtype == "float64"
+    assert empty_scarcity["position_starters"].dtype == "int64"
+    assert empty_scarcity["scarcity_ratio"].dtype == "float64"
+
+
 def test_column_dtypes() -> None:
     player_df = build_player_value_metrics(
         _df(_toy_rows()), ROSTER_POSITIONS, NUM_TEAMS
@@ -596,7 +622,6 @@ def test_column_dtypes() -> None:
     )
 
     assert player_df["season"].dtype == "int64"
-    assert player_df["games_played"].dtype == "int64"
     assert player_df["position_players"].dtype == "int64"
     assert player_df["value_rank"].dtype == "int64"
     assert player_df["sleeper_player_id"].dtype == object
@@ -604,6 +629,7 @@ def test_column_dtypes() -> None:
     assert player_df["position"].dtype == object
     assert player_df["nfl_team"].dtype == object
     for column in (
+        "games_played",
         "points_per_game",
         "total_points",
         "position_mean_ppg",
@@ -628,3 +654,175 @@ def test_column_dtypes() -> None:
         "scarcity_ratio",
     ):
         assert scarcity_df[column].dtype == "float64", column
+
+
+# --------------------------------------------------------------------------
+# Edge cases hardened after code review (all verified by execution)
+# --------------------------------------------------------------------------
+
+
+def test_num_teams_none_uses_worst_rostered_baseline() -> None:
+    """``LeagueSettings.total_rosters`` is Optional[int], so ``None`` must
+    not crash: an unknown team count means no starter cutoff is knowable,
+    and every position falls to the documented worst-rostered baseline.
+    """
+    rows = [
+        _row(2025, "QB1", "QB", 30.0, 480.0, 16),
+        _row(2025, "QB2", "QB", 20.0, 320.0, 16),
+    ]
+    player_df = build_player_value_metrics(_df(rows), ["QB"], None)
+    scarcity_df = build_position_scarcity_metrics(_df(rows), ["QB"], None)
+
+    qb1 = _get_row(player_df, "QB1")
+    assert qb1["replacement_ppg"] == pytest.approx(20.0)  # worst rostered
+    assert qb1["points_above_replacement"] == pytest.approx(480.0 - 20.0 * 16)
+    scarcity = _get_position_row(scarcity_df, "QB")
+    assert scarcity["position_starters"] == 0
+    assert scarcity["replacement_rank"] == 2
+
+
+def test_float_num_teams_is_coerced() -> None:
+    """A float ``num_teams`` (e.g. 12.0 from a pandas/numpy pipeline) must
+    be coerced to an int instead of crashing on a float list index.
+    """
+    rows = [
+        _row(2025, "QB1", "QB", 30.0, 480.0, 16),
+        _row(2025, "QB2", "QB", 20.0, 320.0, 16),
+    ]
+    player_df = build_player_value_metrics(_df(rows), ["QB"], 2.0)
+
+    assert _get_row(player_df, "QB1")["replacement_ppg"] == pytest.approx(20.0)
+    assert _get_row(player_df, "QB2")["value_rank"] == 2
+
+
+def test_value_rank_ties_are_judged_on_rounded_vorp() -> None:
+    """Two VORP values that are mathematically equal but differ by one ULP
+    of floating-point rounding (non-terminating binary fractions) must
+    share a rank. Verified by execution: with exact-float ties these two
+    DEF players split into ranks 1 and 2.
+    """
+    rows = [
+        _row(2025, "DEF1", "DEF", 10.1 / 3, 10.1, 3),
+        _row(2025, "DEF2", "DEF", 10.4 / 6, 10.4, 6),
+        _row(2025, "DEF3", "DEF", 0.1, 1.0, 10),
+    ]
+    player_df = build_player_value_metrics(_df(rows), ["DEF"], 3)
+
+    # replacement = DEF3 at the rank-3 cutoff, ppg 0.1:
+    # DEF1 VORP = 10.1 - 0.1*3 = 9.799999999999999
+    # DEF2 VORP = 10.4 - 0.1*6 = 9.800000000000001
+    def1 = _get_row(player_df, "DEF1")
+    def2 = _get_row(player_df, "DEF2")
+    assert def1["points_above_replacement"] != def2["points_above_replacement"]
+    assert def1["value_rank"] == 1
+    assert def2["value_rank"] == 1
+    # Competition ranking: the next distinct rank skips the tied pair.
+    assert _get_row(player_df, "DEF3")["value_rank"] == 3
+
+
+def test_duplicate_player_season_rows_raise() -> None:
+    """FFA-065 emits exactly one row per player-season; a duplicate would
+    silently double-weight the position means and inflate the field size,
+    so both builders must fail loudly instead.
+    """
+    rows = [
+        _row(2025, "QB1", "QB", 30.0, 480.0, 16),
+        _row(2025, "QB2", "QB", 20.0, 320.0, 16),
+    ]
+    duplicated = rows + [dict(rows[0])]
+
+    with pytest.raises(ValueError, match="duplicate"):
+        build_player_value_metrics(_df(duplicated), ["QB"], 2)
+    with pytest.raises(ValueError, match="duplicate"):
+        build_position_scarcity_metrics(_df(duplicated), ["QB"], 2)
+
+
+def test_fractional_games_played_is_preserved() -> None:
+    """``games_played`` is read straight from the input and used verbatim
+    in the VORP arithmetic; nothing truncates it. 16.7 games must not
+    silently become 16, and the emitted column must carry the exact value.
+    """
+    rows = [
+        _row(2025, "RB1", "RB", 30.0, 501.0, 16),
+        _row(2025, "RB2", "RB", 20.0, 480.0, 16),
+    ]
+    rows[0]["games_played"] = 16.7
+    rows[1]["games_played"] = 24.0
+    player_df = build_player_value_metrics(_df(rows), ["RB"], 1)
+
+    # One RB slot, one team -> cutoff 1 -> the baseline is the best RB,
+    # RB1 himself (ppg 30.0), so VORP = total - 30.0 * games, verbatim:
+    # RB1: 501.0 - 30.0*16.7 = 0.0; RB2: 480.0 - 30.0*24.0 = -240.0.
+    rb1 = _get_row(player_df, "RB1")
+    assert rb1["games_played"] == 16.7
+    assert rb1["points_above_replacement"] == pytest.approx(501.0 - 30.0 * 16.7)
+    rb2 = _get_row(player_df, "RB2")
+    assert rb2["games_played"] == 24.0
+    assert rb2["points_above_replacement"] == pytest.approx(480.0 - 30.0 * 24.0)
+
+
+def test_missing_required_column_raises() -> None:
+    """A wrong-shaped frame (e.g. FFA-064's raw player_week_df, which has
+    no games_played/points_per_game/total_points) must raise loudly
+    instead of silently returning a plausible empty result.
+    """
+    rows = [
+        _row(2025, "QB1", "QB", 30.0, 480.0, 16),
+        _row(2025, "QB2", "QB", 20.0, 320.0, 16),
+    ]
+    wrong_shaped = _df(rows).drop(columns=["total_points"])
+
+    with pytest.raises(ValueError, match="total_points"):
+        build_player_value_metrics(wrong_shaped, ["QB"], 2)
+    with pytest.raises(ValueError, match="total_points"):
+        build_position_scarcity_metrics(wrong_shaped, ["QB"], 2)
+
+
+def test_empty_string_position_is_skipped() -> None:
+    """``pd.isna("")`` is False, so the empty string must be checked
+    explicitly; without it the row would group into a phantom
+    (season, "") position.
+    """
+    rows = [
+        _row(2025, "A", "", 30.0, 300.0, 10),
+        _row(2025, "B", "QB", 20.0, 200.0, 10),
+    ]
+    player_df = build_player_value_metrics(_df(rows), ["QB"], 1)
+    scarcity_df = build_position_scarcity_metrics(_df(rows), ["QB"], 1)
+
+    assert list(player_df["sleeper_player_id"]) == ["B"]
+    assert list(scarcity_df["position"]) == ["QB"]
+
+
+def test_none_label_stays_none_alongside_real_labels() -> None:
+    """A label that FFA-065 never resolved must come back as None (not
+    NaN) regardless of whether other rows in the frame resolved -- the
+    representation must not depend on unrelated rows.
+    """
+    rows = [
+        _row(2025, "QB1", "QB", 30.0, 480.0, 16, player_name=None),
+        _row(2025, "QB2", "QB", 20.0, 320.0, 16, player_name="Bob"),
+    ]
+    player_df = build_player_value_metrics(_df(rows), ["QB"], 2)
+
+    names = player_df["player_name"].tolist()
+    assert names[0] is None
+    assert names[1] == "Bob"
+
+
+def test_idp_slots_count_toward_idp_positions() -> None:
+    """Sleeper's real IDP slot labels (LB, DB, DL, IDP_FLEX, ...) are part
+    of this module's eligibility mapping, so an IDP league gets proper
+    starter cutoffs instead of the worst-rostered fallback.
+    """
+    rows = [_row(2025, f"LB{i}", "LB", 10.0 - i, (10.0 - i) * 10, 10) for i in range(8)]
+    scarcity_df = build_position_scarcity_metrics(_df(rows), ["LB", "IDP_FLEX"], 4)
+    player_df = build_player_value_metrics(_df(rows), ["LB", "IDP_FLEX"], 4)
+
+    scarcity = _get_position_row(scarcity_df, "LB")
+    # LB slot (1) + IDP_FLEX (1) per team, 4 teams -> 8 starters.
+    assert scarcity["position_starters"] == 8
+    assert scarcity["replacement_rank"] == 8
+    assert scarcity["replacement_ppg"] == pytest.approx(3.0)  # rank 8 of 8
+    # The best LB is measured against the cutoff baseline, not himself.
+    assert _get_row(player_df, "LB0")["ppg_above_replacement"] == pytest.approx(7.0)

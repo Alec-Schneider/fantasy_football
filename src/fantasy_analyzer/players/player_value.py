@@ -64,18 +64,24 @@ procedure, per ``(season, position)`` group:
    the frame -- i.e. **the cutoff is clamped to the worst rostered player
    when the league does not roster enough players at the position**. This
    clamp is the module's documented answer to the "not enough players"
-   case: the frame contains only rostered players (see "Rostered-only
-   caveat" below), so when the league rosters fewer than ``cutoff`` players
-   at a position, the best available free agent is below every rostered
-   player and the tightest observable upper bound on his production is the
-   worst rostered player's ``points_per_game``; using that bound makes
-   every player's value-above-replacement conservative (understated), never
-   overstated.
+   case, which the frame cannot distinguish from a genuinely shallow
+   position: the frame contains only rostered players (see "Rostered-only
+   caveat" below), so no player at the cutoff rank is observable, and the
+   worst rostered player is the module's explicit baseline. That baseline
+   is a deliberate heuristic, not a bound: when the league rosters fewer
+   than ``cutoff`` players at a position, a better unrostered player may
+   exist -- the waiver wire is the whole point of replacement value -- so
+   VORP values can be *overstated* relative to the true best free pickup
+   in exactly the configuration the clamp was written for (and understated
+   when unrostered players are worse, the common case). Callers who want
+   the free-agent-inclusive reading must wait for the league-wide row
+   source described in "Rostered-only caveat" below.
 4. **Handle the no-starting-slots case.** If ``cutoff < 1`` (the league has
    no starting slots at the position -- e.g. ``num_teams = 0``, or a
    position with no slots in ``roster_positions``), the replacement player
    is likewise the worst rostered player at the position, for the same
-   "tightest observable bound" reason as the clamp.
+   reason as the clamp: the frame cannot observe a replacement-eligible
+   player, and the worst rostered player is the documented baseline.
 5. **``replacement_ppg``** is the replacement player's ``points_per_game``,
    the same value for every player at that ``(season, position)``.
 
@@ -132,8 +138,10 @@ position's ``replacement_ppg``, and ``g`` the player's ``games_played``.
   of tied players. ``value_rank = 1`` is the player who produced the most
   points above replacement in the league that season, whatever his
   position. Because the frame is one-league-scoped (see above), "the
-  league" here is exactly the player pool in the input. Ties are exact
-  ties on the computed float (see "Missing values / edge cases" below).
+  league" here is exactly the player pool in the input. Ties are judged
+  on the value rounded to six decimal places, so floating-point noise
+  cannot split a mathematically-equal VORP (see "Missing values / edge
+  cases" below).
 
 Positional scarcity (one row per position-season)
 -----------------------------------------------------
@@ -194,11 +202,13 @@ Consequently the replacement baseline here is computed from the league's
 rostered-and-played players only. When the league rosters at least
 ``cutoff`` players at a position this is the standard VORP reading and the
 bias is mild (rostered players at the cutoff are generally better than
-free agents, so the baseline is an upper bound and VORP values are
-conservative); when it rosters fewer, the clamp documented above is the
-module's explicit fallback rather than a silent wrong answer. A future
-ticket that adds a league-wide (free-agent-inclusive) player-week source
-can feed this module the same way without changing its interface.
+free agents, so VORP values are typically conservative); when it rosters
+fewer, the clamp documented in step 3 is the module's explicit fallback
+rather than a silent wrong answer -- with the direction of the resulting
+bias depending on whether a better unrostered player exists (see that
+step's discussion). A future ticket that adds a league-wide
+(free-agent-inclusive) player-week source can feed this module the same
+way without changing its interface.
 
 Grouping key: ``(season, position)`` -- seasons are never pooled
 ---------------------------------------------------------------------
@@ -215,7 +225,8 @@ Missing values / edge cases
 -----------------------------
 
 - **Empty ``performance_df``**: both builders return an empty DataFrame
-  with their expected columns.
+  with their expected columns and the documented per-column dtypes (see
+  "Column dtypes" below) -- an empty frame never upcasts a later concat.
 - **A row with missing ``season``, ``sleeper_player_id``, or ``position``**:
   not expected under FFA-065's contract for ``season``/``sleeper_player_id``
   and only reachable for ``position`` via that module's documented
@@ -223,7 +234,31 @@ Missing values / edge cases
   to a position group and is skipped entirely -- it contributes to no
   position's field, means, or replacement level and gets no value row,
   mirroring ``performance.py``'s and ``position_strength.py``'s identical
-  handling of ungroupable rows.
+  handling of ungroupable rows. An empty string in any of the three
+  identity fields is treated as missing the same way (``pd.isna("")`` is
+  ``False``, so it must be checked explicitly; without the check it would
+  group into a phantom ``(season, "")`` position).
+- **A ``performance_df`` missing a required column** (``season``,
+  ``sleeper_player_id``, ``position``, ``games_played``,
+  ``points_per_game``, ``total_points``): both builders raise
+  ``ValueError`` naming the missing columns. A wrong-shaped frame silently
+  returning a plausible empty result would be indistinguishable from a
+  genuinely empty league -- e.g. passing FFA-064's raw ``player_week_df``
+  (which has no ``games_played``/``points_per_game``/``total_points``)
+  directly here must fail loudly, not produce "no qualifying players".
+- **Duplicate ``(season, sleeper_player_id)`` rows**: not expected under
+  FFA-065's contract (it emits exactly one row per player-season). A
+  duplicate would silently double-weight the position means, inflate the
+  field size, and shift the replacement level for the whole position, so
+  both builders raise ``ValueError`` on the duplicate instead of computing
+  a corrupted answer. This is a contract violation, not a degenerate
+  league configuration -- the total-function guarantees above still hold
+  for valid frames.
+- **Fractional ``games_played``**: read straight from the input and used
+  verbatim in the VORP arithmetic (``total_points - replacement_ppg *
+  games_played``); the emitted column preserves the input value exactly
+  and is ``float64`` (see "Column dtypes" below). FFA-065 emits integral
+  values; nothing in this module truncates or rounds them.
 - **A row with missing ``games_played``, ``points_per_game``, or
   ``total_points``**: not expected under FFA-065's contract (all three are
   always defined for every emitted row, since a row only exists with at
@@ -235,17 +270,23 @@ Missing values / edge cases
   ``sleeper_player_id``), but the ``replacement_ppg`` value is identical
   for every tied player, so ties at the cutoff are value-invariant -- see
   step 3 of the methodology above.
-- **Ties in ``value_rank``**: standard competition ranking on the computed
-  ``points_above_replacement`` float, using exact equality -- the identical
-  exact-float convention ``position_strength.py``'s ``positional_rank``
-  uses on its computed totals. Two mathematically-equal VORP values that
-  differ by floating-point rounding (e.g. totals that are non-terminating
-  fractions) can in principle be split into adjacent ranks; this is a
-  documented cosmetic limitation, not a correctness error.
-- **``cutoff < 1``** (``num_teams <= 0``, or a position with no starting
-  slots in ``roster_positions``): replacement is the worst rostered player
-  at the position, the tightest observable bound -- see step 4 of the
-  methodology above. Both builders remain total (they never raise for a
+- **Ties in ``value_rank``**: standard competition ranking on
+  ``points_above_replacement``, with values compared after rounding to six
+  decimal places -- well below the finest meaningful fantasy-scoring
+  resolution (points are reported to hundredths) and orders of magnitude
+  above the floating-point noise a season of ``total - rate * games``
+  arithmetic accumulates, so mathematically-equal VORP values that differ
+  only by rounding (e.g. from non-terminating binary fractions) share a
+  rank instead of splitting it. This is a deliberate divergence from
+  ``position_strength.py``'s ``positional_rank``, which uses exact float
+  equality on its computed totals.
+- **``cutoff < 1``** (``num_teams <= 0`` -- including ``num_teams=None``,
+  since ``LeagueSettings.total_rosters`` is optional -- or a position with
+  no starting slots in ``roster_positions``): replacement is the worst
+  rostered player at the position, the documented worst-rostered baseline
+  -- see step 4 of the methodology above. Any numeric ``num_teams``
+  (e.g. ``12.0`` from a pandas/numpy pipeline) is coerced
+  deterministically. Both builders remain total (they never raise for a
   degenerate league configuration).
 - **Negative ``replacement_ppg``** (reachable for a position whose scoring
   can go negative, e.g. DEF): ``ppg_above_replacement`` /
@@ -253,24 +294,36 @@ Missing values / edge cases
   ``scarcity_ratio`` is ``NaN`` -- a negative denominator has no
   percentage meaning, the identical "where appropriate" guard
   ``consistency.py``'s ``cv`` applies to its own denominator.
-- **Positions outside {QB, RB, WR, TE} are not dropped**: K, DEF, or any
-  position value present in the input gets the same treatment as the four
-  headline positions, matching ``position_strength.py``'s generic-position
-  decision -- the starter-slot counting comes from
-  ``START_SLOT_ELIGIBILITY``, which is generic, and a league that starts
-  kickers should see kicker value and scarcity like any other position.
-  A caller who wants strictly the four AGENTS.md headline positions can
-  filter ``position.isin(["QB", "RB", "WR", "TE"])`` after calling.
+- **Positions outside {QB, RB, WR, TE} are not dropped**: K, DEF, DL, LB,
+  DB, or any position value present in the input gets the same treatment
+  as the four headline positions, matching ``position_strength.py``'s
+  generic-position decision -- a league that starts kickers should see
+  kicker value and scarcity like any other position. The starter-slot
+  counting uses ``_VALUE_SLOT_ELIGIBILITY``, a superset of FFA-067's
+  ``START_SLOT_ELIGIBILITY`` that adds Sleeper's real IDP slot labels
+  (``DL``, ``LB``, ``DB``, ``IDP_FLEX``, and the sub-slot labels ``DT``/
+  ``DE``/``CB``/``S``): the replacement baseline has no solver constraint,
+  so it can honor IDP slot semantics without touching FFA-067's optimizer,
+  whose player universe is the six offensive positions. A caller who wants
+  strictly the four AGENTS.md headline positions can filter
+  ``position.isin(["QB", "RB", "WR", "TE"])`` after calling.
 
 Column dtypes
 --------------
 
 In both frames, ``season`` and every count/rank column are plain ``int64``
 (never undefined for a row that exists), every points/ratio column is
-``float64`` with undefined values as ``NaN``, and the label columns
-(``sleeper_player_id``, ``player_name``, ``position``, ``nfl_team``) are
-``object`` -- a label may legitimately be ``None`` if FFA-065 never
-resolved it. Test undefined values with ``pd.isna``, not ``is None``.
+``float64`` with undefined values as ``NaN`` -- including ``games_played``,
+which preserves the input value exactly rather than rounding it -- and the
+label columns (``sleeper_player_id``, ``player_name``, ``position``,
+``nfl_team``) are ``object``: a label may legitimately be ``None`` if
+FFA-065 never resolved it, and the builders restore any ``None``/``NaN``
+label to ``None`` explicitly, so the representation does not depend on
+what the frame's other rows look like. For label columns test undefined
+values with ``is None`` (``pd.isna`` also works); for value columns use
+``pd.isna``. The empty frames returned for empty or unusable input carry
+the same per-column dtypes as non-empty frames, so concatenating an empty
+result with a full one never upcasts.
 """
 
 from __future__ import annotations
@@ -320,8 +373,11 @@ POSITION_SCARCITY_COLUMNS = [
 
 #: Player-value metric columns cast to ``float64`` so undefined values are
 #: ``NaN`` and the dtype does not vary with the data -- see "Column dtypes"
-#: in the module docstring.
+#: in the module docstring. ``games_played`` lives here, not with the int
+#: columns: the input value is preserved exactly (fractional values are
+#: never truncated -- see "Missing values / edge cases").
 _PLAYER_FLOAT_COLUMNS = [
+    "games_played",
     "points_per_game",
     "total_points",
     "position_mean_ppg",
@@ -341,23 +397,132 @@ _SCARCITY_FLOAT_COLUMNS = [
     "scarcity_ratio",
 ]
 
+#: Player-value metric columns cast to ``int64`` -- see "Column dtypes".
+_PLAYER_INT_COLUMNS = ["season", "position_players", "value_rank"]
+
+#: Position-scarcity metric columns cast to ``int64`` -- see "Column dtypes".
+_SCARCITY_INT_COLUMNS = [
+    "season",
+    "players",
+    "position_starters",
+    "replacement_rank",
+]
+
 #: Player-identity label columns carried through from ``performance_df`` --
 #: see "Column dtypes" in the module docstring.
 _PLAYER_LABEL_COLUMNS = ["sleeper_player_id", "player_name", "position", "nfl_team"]
+
+#: Starting-slot labels -> the positions each slot accepts, for this
+#: module's replacement baseline. A superset of FFA-067's
+#: :data:`~fantasy_analyzer.players.lineup_efficiency.START_SLOT_ELIGIBILITY`:
+#: the added entries are Sleeper's real IDP slot labels -- ``DL``, ``LB``,
+#: ``DB``, ``IDP_FLEX``, and the sub-slot labels ``DT``/``DE``/``CB``/``S``,
+#: which count toward their parent position groups (a ``DT`` slot starts a
+#: ``DL`` player). FFA-067's optimizer deliberately stops at the six
+#: offensive positions (its solver universe), so the shared constant is
+#: not extended there; the replacement baseline has no solver, so this
+#: module can honor IDP slot semantics without changing FFA-067's
+#: behavior -- see the module docstring's "Positions outside {QB, RB, WR,
+#: TE}" edge-case bullet. Any slot label not in this mapping (``BN``,
+#: ``IR``, unrecognized labels) is a bench slot.
+_VALUE_SLOT_ELIGIBILITY = {
+    **START_SLOT_ELIGIBILITY,
+    "DL": ("DL",),
+    "LB": ("LB",),
+    "DB": ("DB",),
+    "IDP_FLEX": ("DL", "LB", "DB"),
+    "DT": ("DL",),
+    "DE": ("DL",),
+    "CB": ("DB",),
+    "S": ("DB",),
+}
+
+
+def _is_missing(value: Any) -> bool:
+    """True for ``None``, ``NaN``/``NA``, and the empty string.
+
+    The module's identity and value columns treat all three as absent:
+    ``pd.isna`` alone does not catch ``""`` (it is ``False``), and an
+    empty-string position would otherwise group into a phantom
+    ``(season, "")`` position.
+    """
+    if isinstance(value, str):
+        return value == ""
+    return pd.isna(value)
+
+
+#: Columns a ``performance_df`` must contain for either builder to mean
+#: anything -- the identity fields, plus the three value columns this
+#: module reads from FFA-065's output. The label columns
+#: (``player_name``/``nfl_team``) are optional.
+_REQUIRED_COLUMNS = [
+    "season",
+    "sleeper_player_id",
+    "position",
+    "games_played",
+    "points_per_game",
+    "total_points",
+]
+
+
+def _require_columns(performance_df: pd.DataFrame) -> None:
+    """Raise ``ValueError`` naming any required column the frame lacks.
+
+    A wrong-shaped frame would otherwise skip every row and return a
+    plausible empty result, indistinguishable from a genuinely empty
+    league -- see the module docstring's "Missing values / edge cases"
+    section.
+    """
+    missing = [
+        column for column in _REQUIRED_COLUMNS if column not in performance_df.columns
+    ]
+    if missing:
+        raise ValueError(
+            "performance_df is missing required column(s): "
+            + ", ".join(missing)
+            + "; expected a PLAYER_PERFORMANCE_COLUMNS-shaped frame as "
+            "produced by build_player_performance_metrics (FFA-065)"
+        )
+
+
+def _empty_frame(
+    columns: list[str], int_columns: list[str], float_columns: list[str]
+) -> pd.DataFrame:
+    """An empty DataFrame with the documented per-column dtypes.
+
+    A bare ``pd.DataFrame(columns=...)`` is all-``object`` dtype, which
+    would violate the module's "Column dtypes" contract and upcast any
+    concat with a non-empty frame.
+    """
+    return pd.DataFrame(
+        {
+            column: pd.Series(
+                dtype=(
+                    "int64"
+                    if column in int_columns
+                    else "float64"
+                    if column in float_columns
+                    else object
+                )
+            )
+            for column in columns
+        }
+    )
 
 
 def _starter_slots(roster_positions: list[str]) -> dict[str, int]:
     """Starting slots per position per team, from the league's slot list.
 
-    Maps each slot through ``START_SLOT_ELIGIBILITY`` (FFA-067's documented
-    mapping, reused wholesale) and counts the slot toward every position it
-    can accept -- see step 1 of the module docstring's replacement-level
-    methodology. Bench slots (``BN``, ``IR``, unrecognized labels) are not
-    in the mapping and contribute nothing.
+    Maps each slot through ``_VALUE_SLOT_ELIGIBILITY`` (FFA-067's mapping
+    plus Sleeper's IDP slot labels -- see the module docstring) and counts
+    the slot toward every position it can accept -- see step 1 of the
+    module docstring's replacement-level methodology. Bench slots (``BN``,
+    ``IR``, unrecognized labels) are not in the mapping and contribute
+    nothing.
     """
     slots: dict[str, int] = {}
     for slot in roster_positions or []:
-        eligible = START_SLOT_ELIGIBILITY.get(slot)
+        eligible = _VALUE_SLOT_ELIGIBILITY.get(slot)
         if eligible is None:
             continue
         for position in eligible:
@@ -368,25 +533,45 @@ def _starter_slots(roster_positions: list[str]) -> dict[str, int]:
 def _normalize_players(performance_df: pd.DataFrame) -> list[dict[str, Any]]:
     """The rows of ``performance_df`` this module can assign to a value group.
 
-    Skips rows missing ``season``/``sleeper_player_id``/``position`` (cannot
-    be grouped) and rows missing any of ``games_played``/``points_per_game``/
+    Skips rows missing ``season``/``sleeper_player_id``/``position``
+    (``None``, ``NaN``, or the empty string -- none can be grouped) and
+    rows missing any of ``games_played``/``points_per_game``/
     ``total_points`` (would corrupt means or VORP with ``NaN``) -- see the
-    module docstring's "Missing values / edge cases" section. The three
-    value columns are read straight from FFA-065's output, never recomputed.
+    module docstring's "Missing values / edge cases" section. Raises
+    ``ValueError`` on duplicate ``(season, sleeper_player_id)`` rows,
+    which would silently double-weight the position means and inflate the
+    field size. The three value columns are read straight from FFA-065's
+    output, never recomputed -- ``games_played`` is preserved verbatim,
+    fractional values included.
     """
     players: list[dict[str, Any]] = []
+    seen: set[tuple[int, str]] = set()
     for row in performance_df.itertuples(index=False):
         season = getattr(row, "season", None)
         player_id = getattr(row, "sleeper_player_id", None)
         position = getattr(row, "position", None)
-        if pd.isna(season) or pd.isna(player_id) or pd.isna(position):
+        if _is_missing(season) or _is_missing(player_id) or _is_missing(position):
             continue
 
         games_played = getattr(row, "games_played", None)
         points_per_game = getattr(row, "points_per_game", None)
         total_points = getattr(row, "total_points", None)
-        if pd.isna(games_played) or pd.isna(points_per_game) or pd.isna(total_points):
+        if (
+            _is_missing(games_played)
+            or _is_missing(points_per_game)
+            or _is_missing(total_points)
+        ):
             continue
+
+        key = (int(season), str(player_id))
+        if key in seen:
+            raise ValueError(
+                "performance_df contains duplicate (season, sleeper_player_id) "
+                f"rows for ({season!r}, {player_id!r}); FFA-065 emits one row "
+                "per player-season, and a duplicate would corrupt the position "
+                "means and replacement level"
+            )
+        seen.add(key)
 
         players.append(
             {
@@ -395,7 +580,7 @@ def _normalize_players(performance_df: pd.DataFrame) -> list[dict[str, Any]]:
                 "player_name": getattr(row, "player_name", None),
                 "position": position,
                 "nfl_team": getattr(row, "nfl_team", None),
-                "games_played": int(games_played),
+                "games_played": float(games_played),
                 "points_per_game": float(points_per_game),
                 "total_points": float(total_points),
             }
@@ -418,6 +603,13 @@ def _position_summaries(
     then ascending ``sleeper_player_id``) whose chosen *value* is
     tie-invariant.
     """
+    # ``num_teams`` may arrive as ``None`` (``LeagueSettings.total_rosters``
+    # is optional) or as a float from a pandas/numpy pipeline. ``None``
+    # means "unknown team count" and falls into the no-starting-slots
+    # worst-rostered baseline (``cutoff < 1``); any numeric value is
+    # coerced deterministically -- see the module docstring's edge cases.
+    num_teams = 0 if num_teams is None else int(num_teams)
+
     groups: dict[tuple[int, str], list[dict[str, Any]]] = {}
     for player in players:
         groups.setdefault((player["season"], player["position"]), []).append(player)
@@ -449,34 +641,66 @@ def _position_summaries(
     return summaries
 
 
-def _assign_value_ranks(rows: list[dict[str, Any]]) -> None:
-    """Assign ``value_rank`` in place, within each season, across positions.
+def _assign_value_ranks(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Assign ``value_rank`` in place; return the rows in display order.
 
     Standard competition ("1224") ranking by descending
-    ``points_above_replacement`` -- the identical convention
-    ``position_strength.py``'s ``positional_rank`` uses, with the same
-    exact-float tie convention -- see the module docstring's "Player value
-    metrics" section.
+    ``points_above_replacement`` -- the same convention
+    ``position_strength.py``'s ``positional_rank`` uses -- with ties judged
+    on the value rounded to six decimal places, so floating-point noise
+    cannot split a mathematically-equal VORP (see the module docstring's
+    "Ties in ``value_rank``" edge-case bullet). Ranks are assigned within
+    each season, across all positions.
+
+    The returned list is ordered by ascending ``season``, then ascending
+    ``value_rank``, then ``sleeper_player_id`` -- under competition ranking
+    exactly the descending-value order per season, which is the display
+    order the public builders promise, so no second sort is needed.
     """
     by_season: dict[int, list[dict[str, Any]]] = {}
     for row in rows:
         by_season.setdefault(row["season"], []).append(row)
 
-    for season_rows in by_season.values():
-        ordered = sorted(
-            season_rows,
+    ordered_rows: list[dict[str, Any]] = []
+    for season in sorted(by_season):
+        season_rows = by_season[season]
+        season_rows.sort(
             key=lambda row: (
                 -row["points_above_replacement"],
                 str(row["sleeper_player_id"]),
-            ),
+            )
         )
         current_rank = 0
         previous_points = None
-        for position, row in enumerate(ordered, start=1):
-            if row["points_above_replacement"] != previous_points:
+        for position, row in enumerate(season_rows, start=1):
+            rounded_points = round(row["points_above_replacement"], 6)
+            if rounded_points != previous_points:
                 current_rank = position
-                previous_points = row["points_above_replacement"]
+                previous_points = rounded_points
             row["value_rank"] = current_rank
+        ordered_rows.extend(season_rows)
+    return ordered_rows
+
+
+def _prepare(
+    performance_df: pd.DataFrame,
+    roster_positions: list[str],
+    num_teams: int,
+) -> tuple[list[dict[str, Any]], dict[tuple[int, str], dict[str, Any]]]:
+    """The normalized players and position summaries both builders need.
+
+    The single shared pipeline: validate the frame's shape, normalize its
+    rows, and compute the per-position summaries. Both public builders
+    consume this, so the two frames they emit always agree on the field
+    sizes, means, and replacement levels they both report, and neither
+    re-runs the other's work.
+    """
+    _require_columns(performance_df)
+    players = _normalize_players(performance_df)
+    summaries = _position_summaries(
+        players, _starter_slots(roster_positions), num_teams
+    )
+    return players, summaries
 
 
 def build_player_value_metrics(
@@ -522,15 +746,15 @@ def build_player_value_metrics(
         no row is usable.
     """
     if performance_df.empty:
-        return pd.DataFrame(columns=PLAYER_VALUE_COLUMNS)
+        return _empty_frame(
+            PLAYER_VALUE_COLUMNS, _PLAYER_INT_COLUMNS, _PLAYER_FLOAT_COLUMNS
+        )
 
-    players = _normalize_players(performance_df)
+    players, summaries = _prepare(performance_df, roster_positions, num_teams)
     if not players:
-        return pd.DataFrame(columns=PLAYER_VALUE_COLUMNS)
-
-    summaries = _position_summaries(
-        players, _starter_slots(roster_positions), num_teams
-    )
+        return _empty_frame(
+            PLAYER_VALUE_COLUMNS, _PLAYER_INT_COLUMNS, _PLAYER_FLOAT_COLUMNS
+        )
 
     rows: list[dict[str, Any]] = []
     for player in players:
@@ -563,30 +787,29 @@ def build_player_value_metrics(
             }
         )
 
-    _assign_value_ranks(rows)
-
-    rows.sort(
-        key=lambda row: (
-            row["season"],
-            row["value_rank"],
-            str(row["sleeper_player_id"]),
-        )
-    )
+    rows = _assign_value_ranks(rows)  # already in the promised display order
 
     result = pd.DataFrame(rows)
     result["season"] = result["season"].astype(int)
-    result["games_played"] = result["games_played"].astype(int)
     result["position_players"] = result["position_players"].astype(int)
     result["value_rank"] = result["value_rank"].astype(int)
     for column in _PLAYER_FLOAT_COLUMNS:
         result[column] = result[column].astype(float)
 
-    # Assigned as explicit object-dtype Series, mirroring performance.py's
-    # identical handling: pandas' string-dtype inference would otherwise
-    # upcast a column mixing real labels with ``None`` into a dtype that
-    # silently turns ``None`` into ``NaN``.
+    # Walk the raw lists and restore every missing label to ``None``
+    # explicitly: pandas' string-dtype inference converts a label column
+    # mixing real values with ``None`` to NaN before the object-dtype
+    # reassignment below, so the docstring's "a label may legitimately be
+    # None" promise must not depend on what the frame's other rows look
+    # like.
     for label_column in _PLAYER_LABEL_COLUMNS:
-        result[label_column] = pd.Series(result[label_column].tolist(), dtype=object)
+        result[label_column] = pd.Series(
+            [
+                None if _is_missing(value) else value
+                for value in result[label_column].tolist()
+            ],
+            dtype=object,
+        )
 
     return result[PLAYER_VALUE_COLUMNS]
 
@@ -624,14 +847,15 @@ def build_position_scarcity_metrics(
         empty or no row is usable.
     """
     if performance_df.empty:
-        return pd.DataFrame(columns=POSITION_SCARCITY_COLUMNS)
+        return _empty_frame(
+            POSITION_SCARCITY_COLUMNS, _SCARCITY_INT_COLUMNS, _SCARCITY_FLOAT_COLUMNS
+        )
 
-    players = _normalize_players(performance_df)
-    summaries = _position_summaries(
-        players, _starter_slots(roster_positions), num_teams
-    )
-    if not summaries:
-        return pd.DataFrame(columns=POSITION_SCARCITY_COLUMNS)
+    players, summaries = _prepare(performance_df, roster_positions, num_teams)
+    if not players:
+        return _empty_frame(
+            POSITION_SCARCITY_COLUMNS, _SCARCITY_INT_COLUMNS, _SCARCITY_FLOAT_COLUMNS
+        )
 
     rows: list[dict[str, Any]] = []
     for (season, position), summary in summaries.items():
