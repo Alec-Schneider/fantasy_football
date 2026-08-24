@@ -442,24 +442,11 @@ feat: split head-to-head results by season phase
 # Epic 7 — Advanced Player / Position Analytics
 
 - **FFA-060** — Define Player Data Provider Interface — DONE (`098cff1`) — see PROGRESS.md
-
-## FFA-061 — Add nflverse Weekly Stat Provider
-
-**Status:** REVIEW  
-**Owner:** Data Engineer  
-**Depends on:** FFA-060
-
-**Suggested commit:**
-
-```text
-feat: add nflverse weekly player stats provider
-```
-
----
+- **FFA-061** — Add nflverse Weekly Stat Provider — DONE (`635eff8`) — see PROGRESS.md
 
 ## FFA-062 — Build Sleeper to nflverse Player ID Crosswalk
 
-**Status:** BACKLOG  
+**Status:** READY  
 **Owner:** Data Engineer  
 **Depends on:** FFA-061
 
@@ -822,22 +809,22 @@ Part 7 should begin only after league-specific scoring and matchup structures ar
 
 ## READY
 
-None. FFA-061's implementation is complete and awaiting review (see REVIEW
-below); no other ticket's dependencies have cleared yet.
+### FFA-062 — Build Sleeper to nflverse Player ID Crosswalk
+
+Its only dependency, FFA-061, is DONE. This is the next ticket to implement.
 
 ---
 
 ## BACKLOG
 
 ```text
-FFA-044, FFA-062 through FFA-072
+FFA-044, FFA-063 through FFA-072
 ```
 
 FFA-044 is unblocked on paper (FFA-022 and FFA-040 are both DONE) but is
 intentionally left in BACKLOG rather than READY here since it is not the
 next ticket in the recommended sequence; an agent may still pick it up if
-explicitly assigned. FFA-062 through FFA-072 remain blocked behind FFA-061
-until it clears REVIEW and is marked DONE.
+explicitly assigned. FFA-063 through FFA-072 remain blocked behind FFA-062.
 
 Tickets become READY when their dependencies are complete and reviewed.
 
@@ -851,23 +838,13 @@ None.
 
 ## REVIEW
 
-### FFA-061 — Add nflverse Weekly Stat Provider
-
-Implementation complete: `src/fantasy_analyzer/players/nflverse_client.py`,
-`nflverse_cache.py`, and `nflverse_provider.py` add a
-`NflverseWeeklyStatsProvider` satisfying the `PlayerStatsProvider` protocol
-from FFA-060, backed by nflverse's cumulative `player_stats.csv.gz` release
-asset, with a disk-caching layer mirroring `sleeper/cache.py`. 35 new tests
-(`tests/players/test_nflverse_{client,cache,provider}.py`) run against a
-sanitized fixture (`tests/fixtures/nflverse/player_stats.csv`), no live
-network. Full suite: 432 passed. `ruff check` clean on all touched files.
-Not yet committed. Awaiting user review before moving to DONE.
+None.
 
 ---
 
 ## DONE
 
-FFA-001 through FFA-057, FFA-060 — see PROGRESS.md.
+FFA-001 through FFA-057, FFA-060, FFA-061 — see PROGRESS.md.
 
 ---
 
