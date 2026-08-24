@@ -411,18 +411,7 @@ Analytics tickets must additionally satisfy:
 - **FFA-041** — Head-to-Head Matrix — DONE (`429e512`) — see PROGRESS.md
 - **FFA-042** — Rivalry and Margin Statistics — DONE (`ecedc16`) — see PROGRESS.md
 - **FFA-043** — Add Matchup History Query API — DONE (`610a9e4`) — see PROGRESS.md
-
-## FFA-044 — Split Regular Season and Playoff H2H
-
-**Status:** BACKLOG  
-**Owner:** Data Scientist  
-**Depends on:** FFA-022, FFA-040
-
-**Suggested commit:**
-
-```text
-feat: split head-to-head results by season phase
-```
+- **FFA-044** — Split Regular Season and Playoff H2H — DONE (`99ecf96`) — see PROGRESS.md
 
 ---
 
@@ -625,15 +614,13 @@ None.
 ## BACKLOG
 
 ```text
-FFA-044, FFA-069, FFA-070
+FFA-069, FFA-070
 ```
 
-FFA-044 is unblocked on paper (FFA-022 and FFA-040 are both DONE) but is
-intentionally left in BACKLOG rather than READY here since it is not the
-next ticket in the recommended sequence; an agent may still pick it up if
-explicitly assigned. FFA-069 (deps FFA-033, FFA-064) and FFA-070 (dep
-FFA-067) are likewise unblocked on paper and stay in BACKLOG for the same
-reason.
+FFA-069 (deps FFA-033, FFA-064) and FFA-070 (dep FFA-067) are unblocked on
+paper but intentionally left in BACKLOG rather than READY here since neither
+is the next ticket in the recommended sequence; an agent may still pick
+either up if explicitly assigned.
 
 Tickets become READY when their dependencies are complete and reviewed.
 
