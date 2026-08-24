@@ -452,25 +452,7 @@ feat: split head-to-head results by season phase
 - **FFA-068** — Replacement-Level Player Value — DONE (`eff25d7`, hardened `b18c5e0`) — see PROGRESS.md
 - **FFA-071** — Player Analytics API — DONE (`6771979`) — see PROGRESS.md
 - **FFA-072** — Projection and Ranking Provider Interface — DONE (`7d314af`) — see PROGRESS.md
-
-## FFA-069 — Matchup Player Contribution Analysis
-
-**Status:** BACKLOG  
-**Owner:** Data Scientist  
-**Depends on:** FFA-033, FFA-064
-
-**Suggested commit:**
-
-```text
-feat: add player matchup contribution analysis
-```
-
-Analyze:
-
-- which players drove a win or loss
-- positional advantages
-- player contribution to margin
-- best and worst starters
+- **FFA-069** — Matchup Player Contribution Analysis — DONE (`3289bb0`) — see PROGRESS.md
 
 ---
 
@@ -625,15 +607,14 @@ None.
 ## BACKLOG
 
 ```text
-FFA-044, FFA-069, FFA-070
+FFA-044, FFA-070
 ```
 
 FFA-044 is unblocked on paper (FFA-022 and FFA-040 are both DONE) but is
 intentionally left in BACKLOG rather than READY here since it is not the
 next ticket in the recommended sequence; an agent may still pick it up if
-explicitly assigned. FFA-069 (deps FFA-033, FFA-064) and FFA-070 (dep
-FFA-067) are likewise unblocked on paper and stay in BACKLOG for the same
-reason.
+explicitly assigned. FFA-070 (dep FFA-067) is likewise unblocked on paper
+and stays in BACKLOG for the same reason.
 
 Tickets become READY when their dependencies are complete and reviewed.
 
@@ -653,7 +634,7 @@ None.
 
 ## DONE
 
-FFA-001 through FFA-057, FFA-060 through FFA-068, FFA-071, FFA-072 — see
+FFA-001 through FFA-057, FFA-060 through FFA-069, FFA-071, FFA-072 — see
 PROGRESS.md.
 
 ---
