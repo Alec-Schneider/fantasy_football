@@ -446,35 +446,11 @@ feat: split head-to-head results by season phase
 - **FFA-062** — Build Sleeper to nflverse Player ID Crosswalk — DONE (`85058c4`) — see PROGRESS.md
 - **FFA-063** — Build League-Specific Fantasy Scoring Engine — DONE (`2513d33`) — see PROGRESS.md
 - **FFA-064** — Build Player-Week Fact Table — DONE (`a106cf9`) — see PROGRESS.md
-
-## FFA-065 — Player Performance Metrics
-
-**Status:** READY  
-**Owner:** Data Scientist  
-**Depends on:** FFA-064
-
-**Suggested commit:**
-
-```text
-feat: add player performance analytics
-```
-
-### Metrics
-
-- weekly fantasy points
-- points per game
-- median score
-- volatility
-- ceiling
-- floor
-- boom rate
-- bust rate
-
----
+- **FFA-065** — Player Performance Metrics — DONE (`60e6c9d`) — see PROGRESS.md
 
 ## FFA-066 — Position Strength Analytics
 
-**Status:** BACKLOG  
+**Status:** READY  
 **Owner:** Data Scientist  
 **Depends on:** FFA-065
 
@@ -760,22 +736,22 @@ Part 7 should begin only after league-specific scoring and matchup structures ar
 
 ## READY
 
-### FFA-065 — Player Performance Metrics
+### FFA-066 — Position Strength Analytics
 
-Its dependency, FFA-064, is DONE. This is the next ticket to implement.
+Its dependency, FFA-065, is DONE. This is the next ticket to implement.
 
 ---
 
 ## BACKLOG
 
 ```text
-FFA-044, FFA-066 through FFA-072
+FFA-044, FFA-067 through FFA-072
 ```
 
 FFA-044 is unblocked on paper (FFA-022 and FFA-040 are both DONE) but is
 intentionally left in BACKLOG rather than READY here since it is not the
 next ticket in the recommended sequence; an agent may still pick it up if
-explicitly assigned. FFA-066 through FFA-072 remain blocked behind FFA-065.
+explicitly assigned. FFA-067 through FFA-072 remain blocked behind FFA-066.
 
 Tickets become READY when their dependencies are complete and reviewed.
 
@@ -795,7 +771,7 @@ None.
 
 ## DONE
 
-FFA-001 through FFA-057, FFA-060, FFA-061, FFA-062, FFA-063, FFA-064 — see PROGRESS.md.
+FFA-001 through FFA-057, FFA-060, FFA-061, FFA-062, FFA-063, FFA-064, FFA-065 — see PROGRESS.md.
 
 ---
 
