@@ -35,6 +35,10 @@ from fantasy_analyzer.players.performance import (
     PLAYER_PERFORMANCE_COLUMNS,
     build_player_performance_metrics,
 )
+from fantasy_analyzer.players.player_analytics import (
+    PlayerAnalytics,
+    build_player_analytics,
+)
 from fantasy_analyzer.players.player_value import (
     PLAYER_VALUE_COLUMNS,
     POSITION_SCARCITY_COLUMNS,
@@ -106,4 +110,6 @@ __all__ = [
     "ROSTER_EFFICIENCY_COLUMNS",
     "build_lineup_efficiency_metrics",
     "build_roster_efficiency_metrics",
+    "PlayerAnalytics",
+    "build_player_analytics",
 ]
