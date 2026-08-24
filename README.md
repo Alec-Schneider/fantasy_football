@@ -65,3 +65,12 @@ analytics against your own live Sleeper data -- league discovery, the
 head-to-head history, and the Epic 6 advanced league analytics (all-play,
 schedule luck, consistency, strength of schedule, power rankings, playoff
 brackets). See the notebook's first cell for kernel setup.
+
+`notebooks/roster_analysis.ipynb` runs a full end-to-end roster analysis
+for one team's season -- player value, position strength, weekly lineup
+efficiency, matchup player contribution, and lineup tendencies (Epic 7,
+FFA-064 through FFA-070) -- then applies the same analysis to every team in
+the league and compares them with charts (power ranking, lineup
+efficiency, schedule luck, a position-strength heatmap, and roster
+composition). Also needs the `matplotlib` dev extra; see the notebook's
+first cell for kernel setup.

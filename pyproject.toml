@@ -19,6 +19,7 @@ dev = [
     "ruff>=0.4",
     "requests-mock>=1.12",
     "ipykernel>=6.29",
+    "matplotlib>=3.8",
 ]
 
 [project.scripts]
