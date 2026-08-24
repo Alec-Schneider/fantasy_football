@@ -497,7 +497,7 @@ Analyze:
 
 ## FFA-071 — Player Analytics API
 
-**Status:** READY  
+**Status:** IN PROGRESS  
 **Owner:** Software Engineer  
 **Depends on:** FFA-065 through FFA-070
 
@@ -667,13 +667,7 @@ Part 7 should begin only after league-specific scoring and matchup structures ar
 
 ## READY
 
-### FFA-071 — Player Analytics API
-
-Its dependency, FFA-068, is DONE. Every DataFrame the ticket expects
-(`player_weekly_df`, `player_season_df`, `position_summary_df`,
-`roster_efficiency_df`, `player_value_df`) is produced by FFA-065 through
-FFA-068, all DONE; the FFA-069 and FFA-070 frames can be added to the API
-when those tickets land. This is the next ticket to implement.
+None.
 
 ---
 
@@ -696,7 +690,13 @@ Tickets become READY when their dependencies are complete and reviewed.
 
 ## IN PROGRESS
 
-None.
+### FFA-071 — Player Analytics API
+
+Its dependency, FFA-068, is DONE. Every DataFrame the ticket expects
+(`player_weekly_df`, `player_season_df`, `position_summary_df`,
+`roster_efficiency_df`, `player_value_df`) is produced by FFA-065 through
+FFA-068, all DONE; the FFA-069 and FFA-070 frames can be added to the API
+when those tickets land.
 
 ---
 
