@@ -34,6 +34,15 @@ from fantasy_analyzer.players.player_week import (
     PlayerWeekFactTable,
     build_player_week_fact_table,
 )
+from fantasy_analyzer.players.position_strength import (
+    BOOM_BUST_THRESHOLD_STDEVS as POSITION_BOOM_BUST_THRESHOLD_STDEVS,
+)
+from fantasy_analyzer.players.position_strength import (
+    MIN_WEEKS_FOR_BOOM_BUST,
+    MIN_WEEKS_FOR_DISPERSION,
+    POSITION_STRENGTH_COLUMNS,
+    build_position_strength_metrics,
+)
 from fantasy_analyzer.players.provider import (
     PLAYER_WEEK_IDENTITY_COLUMNS,
     PlayerStatsProvider,
@@ -72,4 +81,9 @@ __all__ = [
     "MIN_GAMES_FOR_DISPERSION",
     "MIN_GAMES_FOR_BOOM_BUST",
     "build_player_performance_metrics",
+    "POSITION_STRENGTH_COLUMNS",
+    "POSITION_BOOM_BUST_THRESHOLD_STDEVS",
+    "MIN_WEEKS_FOR_DISPERSION",
+    "MIN_WEEKS_FOR_BOOM_BUST",
+    "build_position_strength_metrics",
 ]
