@@ -12,6 +12,18 @@ from fantasy_analyzer.players.lineup_efficiency import (
     build_lineup_efficiency_metrics,
     build_roster_efficiency_metrics,
 )
+from fantasy_analyzer.players.lineup_tendencies import (
+    BENCH_ALLOCATION_COLUMNS,
+    FLEX_USAGE_COLUMNS,
+    POSITIONAL_PREFERENCE_COLUMNS,
+    ROSTER_CONSTRUCTION_COLUMNS,
+    START_SIT_TENDENCY_COLUMNS,
+    build_bench_allocation_metrics,
+    build_flex_usage_metrics,
+    build_positional_preference_metrics,
+    build_roster_construction_metrics,
+    build_start_sit_tendency_metrics,
+)
 from fantasy_analyzer.players.nflverse_cache import (
     DEFAULT_CACHE_PATH as NFLVERSE_DEFAULT_CACHE_PATH,
 )
@@ -118,6 +130,16 @@ __all__ = [
     "ROSTER_EFFICIENCY_COLUMNS",
     "build_lineup_efficiency_metrics",
     "build_roster_efficiency_metrics",
+    "ROSTER_CONSTRUCTION_COLUMNS",
+    "BENCH_ALLOCATION_COLUMNS",
+    "FLEX_USAGE_COLUMNS",
+    "START_SIT_TENDENCY_COLUMNS",
+    "POSITIONAL_PREFERENCE_COLUMNS",
+    "build_roster_construction_metrics",
+    "build_bench_allocation_metrics",
+    "build_flex_usage_metrics",
+    "build_start_sit_tendency_metrics",
+    "build_positional_preference_metrics",
     "PlayerAnalytics",
     "build_player_analytics",
 ]
