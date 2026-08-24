@@ -3,12 +3,14 @@
     "roster_id": 1,
     "matchup_id": 1,
     "points": 123.45,
-    "starters": ["1000"]
+    "starters": ["1000"],
+    "players": ["1000", "1001"]
   },
   {
     "roster_id": 2,
     "matchup_id": 1,
     "points": 110.2,
-    "starters": ["1002"]
+    "starters": ["1002"],
+    "players": ["1002", "1003"]
   }
 ]

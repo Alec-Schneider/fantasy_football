@@ -20,6 +20,11 @@ from fantasy_analyzer.players.nflverse_provider import (
     NflverseWeeklyStatsProvider,
     normalize_player_stats,
 )
+from fantasy_analyzer.players.player_week import (
+    PLAYER_WEEK_COLUMNS,
+    PlayerWeekFactTable,
+    build_player_week_fact_table,
+)
 from fantasy_analyzer.players.provider import (
     PLAYER_WEEK_IDENTITY_COLUMNS,
     PlayerStatsProvider,
@@ -50,4 +55,7 @@ __all__ = [
     "SCORING_KEY_TO_STAT_COLUMNS",
     "ScoringResult",
     "calculate_fantasy_points",
+    "PLAYER_WEEK_COLUMNS",
+    "PlayerWeekFactTable",
+    "build_player_week_fact_table",
 ]
