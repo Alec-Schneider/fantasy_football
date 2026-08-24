@@ -22,3 +22,9 @@ def load_sleeper_fixture():
         return load_fixture("sleeper", filename)
 
     return _load
+
+
+@pytest.fixture
+def nflverse_fixture_path() -> Path:
+    """Path to the sanitized nflverse player-stats CSV fixture."""
+    return FIXTURES_DIR / "nflverse" / "player_stats.csv"

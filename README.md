@@ -56,3 +56,12 @@ fantasy-analyzer leagues schneidbaby --season 2025
 # Print standings and scoring summary for a league.
 fantasy-analyzer summary <league_id> --total-weeks 18
 ```
+
+## Notebook
+
+`notebooks/league_walkthrough.ipynb` walks through the league and matchup
+analytics against your own live Sleeper data -- league discovery, the
+`LeagueSnapshot`, standings, the full matchup normalization pipeline,
+head-to-head history, and the Epic 6 advanced league analytics (all-play,
+schedule luck, consistency, strength of schedule, power rankings, playoff
+brackets). See the notebook's first cell for kernel setup.

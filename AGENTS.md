@@ -365,721 +365,52 @@ Analytics tickets must additionally satisfy:
 
 # Epic 1 — Sleeper Client
 
-## FFA-001 — Bootstrap Python Project
-
-**Status:** READY  
-**Owner:** Software Engineer
-
-**Suggested commit:**
-
-```text
-chore: bootstrap fantasy analyzer project
-```
-
-### Scope
-
-Create the initial Python package.
-
-Suggested structure:
-
-```text
-fantasy-football-analyzer/
-├── pyproject.toml
-├── README.md
-├── AGENTS.md
-├── src/
-│   └── fantasy_analyzer/
-│       ├── __init__.py
-│       ├── sleeper/
-│       ├── league/
-│       ├── matchups/
-│       ├── analytics/
-│       └── players/
-└── tests/
-```
-
-### Acceptance Criteria
-
-- package installs locally
-- `pytest` runs successfully
-- formatting/linting configuration exists
-- supported Python version is defined
-- `requests` and `pandas` are declared dependencies
-
----
-
-## FFA-002 — Add Base Sleeper HTTP Client
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-001
-
-**Suggested commit:**
-
-```text
-feat: add Sleeper API HTTP client
-```
-
-### Scope
-
-Implement a reusable `SleeperClient`.
-
-Expected capabilities:
-
-```python
-SleeperClient
-_get()
-timeout handling
-HTTP error handling
-session reuse
-```
-
-### Acceptance Criteria
-
-- successful requests return decoded JSON
-- 4xx/5xx responses produce useful exceptions
-- timeout behavior is covered by tests
-- URL construction is centralized
-
----
-
-## FFA-003 — Add User and League Discovery
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-002
-
-**Suggested commit:**
-
-```text
-feat: add Sleeper user and league discovery
-```
-
-### Scope
-
-Implement:
-
-```python
-get_user()
-get_leagues()
-```
-
-Expected development workflow:
-
-```python
-client.get_user("schneidbaby")
-client.get_leagues(user_id=..., season=2025)
-```
-
-### Acceptance Criteria
-
-- username resolves to permanent Sleeper `user_id`
-- 2025 leagues can be retrieved
-- nonexistent users are handled cleanly
-- no downstream code relies on username as an immutable identifier
-
----
-
-## FFA-004 — Add Core League Endpoints
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-002
-
-**Suggested commit:**
-
-```text
-feat: add Sleeper league roster and user endpoints
-```
-
-### Scope
-
-Implement:
-
-```python
-get_league()
-get_users()
-get_rosters()
-```
-
-### Acceptance Criteria
-
-The client can retrieve:
-
-- league metadata
-- league rules
-- scoring settings
-- roster positions
-- league users
-- rosters
-
----
-
-## FFA-005 — Add Historical Season Endpoints
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-002
-
-**Suggested commit:**
-
-```text
-feat: add Sleeper matchup playoff and transaction endpoints
-```
-
-### Scope
-
-Implement:
-
-```python
-get_matchups()
-get_winners_bracket()
-get_losers_bracket()
-get_transactions()
-get_drafts()
-get_draft_picks()
-```
-
-### Acceptance Criteria
-
-- weekly matchups can be fetched
-- playoff brackets can be fetched
-- transactions can be fetched
-- drafts and draft picks can be fetched
-- fixtures cover representative responses
-
----
-
-## FFA-006 — Add Cached Sleeper Player Catalog
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-002
-
-**Suggested commit:**
-
-```text
-feat: add cached Sleeper player catalog
-```
-
-### Scope
-
-Implement:
-
-```python
-get_players()
-load_player_cache()
-refresh_player_cache()
-```
-
-### Acceptance Criteria
-
-- Sleeper player catalog can be retrieved
-- player catalog can be cached locally
-- normal analysis does not require repeatedly downloading the full catalog
-- cache behavior is tested
-
----
-
-## FFA-007 — Add Sleeper API Contract Fixtures
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-003, FFA-004, FFA-005, FFA-006
-
-**Suggested commit:**
-
-```text
-test: add Sleeper API contract fixtures
-```
-
-### Scope
-
-Create sanitized representative API fixtures.
-
-### Acceptance Criteria
-
-- main test suite runs without internet access
-- public API parsing behavior is covered by fixtures
-- no private or unnecessary personal information is committed
+- **FFA-001** — Bootstrap Python Project — DONE (`0c2889a`) — see PROGRESS.md
+- **FFA-002** — Add Base Sleeper HTTP Client — DONE (`e7dcbf5`) — see PROGRESS.md
+- **FFA-003** — Add User and League Discovery — DONE (`7f1d689`) — see PROGRESS.md
+- **FFA-004** — Add Core League Endpoints — DONE (`a9ef6ec`) — see PROGRESS.md
+- **FFA-005** — Add Historical Season Endpoints — DONE (`d3db957`) — see PROGRESS.md
+- **FFA-006** — Add Cached Sleeper Player Catalog — DONE (`a33d0d7`) — see PROGRESS.md
+- **FFA-007** — Add Sleeper API Contract Fixtures — DONE (absorbed into per-endpoint commits) — see PROGRESS.md
 
 ---
 
 # Epic 2 — Normalize League Data
 
-## FFA-010 — Build Team and Owner Mapping
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-004
-
-**Suggested commit:**
-
-```text
-feat: normalize Sleeper owners and rosters
-```
-
-### Scope
-
-Create stable mappings between:
-
-```text
-user_id
-roster_id
-display_name
-team_name
-```
-
-### Acceptance Criteria
-
-- each roster can resolve to its owner when available
-- missing owners are handled
-- display/team names remain labels, not keys
-
----
-
-## FFA-011 — Normalize League Settings
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-004
-
-**Suggested commit:**
-
-```text
-feat: normalize league scoring and roster settings
-```
-
-### Scope
-
-Normalize:
-
-- scoring settings
-- roster slots
-- league size
-- playoff configuration
-- waiver configuration
-- season metadata
-
-### Acceptance Criteria
-
-- downstream code does not need to understand raw Sleeper setting shapes
-- scoring and roster settings are available in predictable structures
-
----
-
-## FFA-012 — Normalize Player Metadata
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-006
-
-**Suggested commit:**
-
-```text
-feat: enrich rosters with Sleeper player metadata
-```
-
-### Scope
-
-Convert raw Sleeper player IDs into useful player metadata.
-
-Example:
-
-```text
-4984 -> Josh Allen | QB | BUF | 4984
-```
-
-### Acceptance Criteria
-
-- roster player IDs resolve to metadata when available
-- unknown or retired player IDs do not crash normalization
-
----
-
-## FFA-013 — Build LeagueSnapshot Service
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-010, FFA-011, FFA-012
-
-**Suggested commit:**
-
-```text
-feat: add LeagueSnapshot service
-```
-
-### Scope
-
-Create the normalized league representation used by downstream analysis.
-
-Expected interface:
-
-```python
-snapshot.league
-snapshot.teams_df
-snapshot.users_df
-snapshot.rosters_df
-snapshot.players_df
-snapshot.scoring_settings
-snapshot.roster_positions
-```
-
-### Acceptance Criteria
-
-- one call can construct a normalized league snapshot
-- downstream analytics do not need raw endpoint joins
-- snapshot construction is tested from fixtures
-
----
-
-## FFA-014 — Add Normalized Data Tests
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-013
-
-**Suggested commit:**
-
-```text
-test: add normalized league data coverage
-```
-
-### Acceptance Criteria
-
-- owner/roster mapping tested
-- scoring normalization tested
-- missing owner/player cases tested
-- normalized schemas tested
+- **FFA-010** — Build Team and Owner Mapping — DONE (`bf0bf79`) — see PROGRESS.md
+- **FFA-011** — Normalize League Settings — DONE (`ef3340e`) — see PROGRESS.md
+- **FFA-012** — Normalize Player Metadata — DONE (`63d40df`) — see PROGRESS.md
+- **FFA-013** — Build LeagueSnapshot Service — DONE (`e5e5428`) — see PROGRESS.md
+- **FFA-014** — Add Normalized Data Tests — DONE (absorbed into FFA-010/011/012/013 commits) — see PROGRESS.md
 
 ---
 
 # Epic 3 — League Summary
 
-## FFA-020 — Build Base Standings
-
-**Status:** BACKLOG  
-**Owner:** Data Scientist  
-**Depends on:** FFA-013
-
-**Suggested commit:**
-
-```text
-feat: add league standings analysis
-```
-
-### Metrics
-
-- wins
-- losses
-- ties
-- win percentage
-- points for
-- points against
-- point differential
-
-### Acceptance Criteria
-
-- standings reconcile to Sleeper roster records
-- ties are handled
-- ranking rules are documented
-
----
-
-## FFA-021 — Add Scoring Summary Metrics
-
-**Status:** BACKLOG  
-**Owner:** Data Scientist  
-**Depends on:** FFA-020
-
-**Suggested commit:**
-
-```text
-feat: add league scoring summary metrics
-```
-
-### Metrics
-
-- points per game
-- points against per game
-- scoring rank
-- average margin
-- high score
-- low score
-
----
-
-## FFA-022 — Identify Regular Season and Playoff Boundaries
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-011
-
-**Suggested commit:**
-
-```text
-feat: derive regular season and playoff boundaries
-```
-
-### Acceptance Criteria
-
-- regular-season weeks are explicit
-- playoff weeks are explicit
-- downstream analytics can filter either period reliably
-
----
-
-## FFA-023 — Build League Summary API
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-020, FFA-021, FFA-022
-
-**Suggested commit:**
-
-```text
-feat: add league summary service
-```
-
-Expected interface:
-
-```python
-analysis.league_summary()
-analysis.standings()
-```
-
----
-
-## FFA-024 — Add CLI League Summary
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-023
-
-**Suggested commit:**
-
-```text
-feat: add CLI league summary
-```
-
-### Goal
-
-Allow a simple local command to inspect a 2025 league before any UI exists.
+- **FFA-020** — Build Base Standings — DONE (`f1e4ce1`) — see PROGRESS.md
+- **FFA-021** — Add Scoring Summary Metrics — DONE (`069c82c`) — see PROGRESS.md
+- **FFA-022** — Identify Regular Season and Playoff Boundaries — DONE (`3423eef`) — see PROGRESS.md
+- **FFA-023** — Build League Summary API — DONE (`b0afc8a`) — see PROGRESS.md
+- **FFA-024** — Add CLI League Summary — DONE (`ac37952`) — see PROGRESS.md
 
 ---
 
 # Epic 4 — Normalize Matchups
 
-## FFA-030 — Load Full Season Matchups
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-005, FFA-022
-
-**Suggested commit:**
-
-```text
-feat: load full season of Sleeper matchups
-```
-
-### Acceptance Criteria
-
-- all relevant 2025 weeks can be loaded
-- week metadata is retained
-- playoff status is retained
-
----
-
-## FFA-031 — Pair Opponents by Matchup ID
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-030
-
-**Suggested commit:**
-
-```text
-feat: pair weekly opponents by matchup id
-```
-
-### Acceptance Criteria
-
-- two teams sharing a matchup ID are paired
-- incomplete/bye-like cases are handled explicitly
-- pairing logic is unit tested
-
----
-
-## FFA-032 — Normalize Matchup Outcomes
-
-**Status:** BACKLOG  
-**Owner:** Data Scientist  
-**Depends on:** FFA-031
-
-**Suggested commit:**
-
-```text
-feat: normalize fantasy matchup outcomes
-```
-
-### Derive
-
-- winner
-- loser
-- tie
-- margin
-- score differential
-
----
-
-## FFA-033 — Build Season Matchup DataFrame
-
-**Status:** BACKLOG  
-**Owner:** Data Scientist  
-**Depends on:** FFA-032
-
-**Suggested commit:**
-
-```text
-feat: build season matchup dataframe
-```
-
-### Target Schema
-
-```text
-season
-week
-is_playoff
-matchup_id
-roster_1_id
-roster_2_id
-owner_1
-owner_2
-points_1
-points_2
-winner
-loser
-margin
-```
-
----
-
-## FFA-034 — Reconcile Matchups to Standings
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-033
-
-**Suggested commit:**
-
-```text
-test: reconcile weekly matchups to season standings
-```
-
-### Acceptance Criteria
-
-Derived:
-
-- wins
-- losses
-- points for
-- points against
-
-must reconcile to Sleeper season records within explicitly documented tolerances.
+- **FFA-030** — Load Full Season Matchups — DONE (`ecb0182`) — see PROGRESS.md
+- **FFA-031** — Pair Opponents by Matchup ID — DONE (`0522af8`) — see PROGRESS.md
+- **FFA-032** — Normalize Matchup Outcomes — DONE (`00dba42`) — see PROGRESS.md
+- **FFA-033** — Build Season Matchup DataFrame — DONE (`d4b9d4e`) — see PROGRESS.md
+- **FFA-034** — Reconcile Matchups to Standings — DONE (`c718115`) — see PROGRESS.md
 
 ---
 
 # Epic 5 — User-vs-User Matchup Analytics
 
-## FFA-040 — Head-to-Head Records
-
-**Status:** BACKLOG  
-**Owner:** Data Scientist  
-**Depends on:** FFA-033
-
-**Suggested commit:**
-
-```text
-feat: add manager head-to-head records
-```
-
-### Metrics
-
-- meetings
-- wins
-- losses
-- ties
-- total points
-- average points
-- average opponent points
-
----
-
-## FFA-041 — Head-to-Head Matrix
-
-**Status:** BACKLOG  
-**Owner:** Data Scientist  
-**Depends on:** FFA-040
-
-**Suggested commit:**
-
-```text
-feat: add league head-to-head matrix
-```
-
-Example output:
-
-```text
-        Alec   Mike   Joe
-Alec      —     3-2   2-0
-Mike     2-3     —    1-2
-Joe      0-2    2-1    —
-```
-
----
-
-## FFA-042 — Rivalry and Margin Statistics
-
-**Status:** BACKLOG  
-**Owner:** Data Scientist  
-**Depends on:** FFA-040
-
-**Suggested commit:**
-
-```text
-feat: add rivalry and matchup margin metrics
-```
-
-### Metrics
-
-- average margin
-- closest game
-- largest win
-- largest loss
-- highest scoring matchup
-
----
-
-## FFA-043 — Add Matchup History Query API
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-040, FFA-041, FFA-042
-
-**Suggested commit:**
-
-```text
-feat: add matchup history query service
-```
-
-Expected interface:
-
-```python
-analysis.head_to_head(team_a, team_b)
-analysis.head_to_head_matrix()
-```
-
----
+- **FFA-040** — Head-to-Head Records — DONE (`ea5307f`) — see PROGRESS.md
+- **FFA-041** — Head-to-Head Matrix — DONE (`429e512`) — see PROGRESS.md
+- **FFA-042** — Rivalry and Margin Statistics — DONE (`ecedc16`) — see PROGRESS.md
+- **FFA-043** — Add Matchup History Query API — DONE (`610a9e4`) — see PROGRESS.md
 
 ## FFA-044 — Split Regular Season and Playoff H2H
 
@@ -1097,184 +428,24 @@ feat: split head-to-head results by season phase
 
 # Epic 6 — Advanced League Analytics
 
-## FFA-050 — Weekly Scoring Ranks
-
-**Status:** BACKLOG  
-**Owner:** Data Scientist  
-**Depends on:** FFA-033
-
-**Suggested commit:**
-
-```text
-feat: add weekly scoring ranks
-```
-
----
-
-## FFA-051 — All-Play Records
-
-**Status:** BACKLOG  
-**Owner:** Data Scientist  
-**Depends on:** FFA-050
-
-**Suggested commit:**
-
-```text
-feat: add all-play standings
-```
-
-For each week, calculate how a team would have performed against every other team.
-
----
-
-## FFA-052 — Expected Wins and Schedule Luck
-
-**Status:** BACKLOG  
-**Owner:** Data Scientist  
-**Depends on:** FFA-051
-
-**Suggested commit:**
-
-```text
-feat: add expected wins and schedule luck
-```
-
-### Example
-
-```text
-Actual Record:     8-6
-Expected Record:  10.0-4.0
-Schedule Luck:    -2.0 wins
-```
-
-The exact expected-wins formulation must be documented and tested.
-
----
-
-## FFA-053 — Team Consistency Metrics
-
-**Status:** BACKLOG  
-**Owner:** Data Scientist  
-**Depends on:** FFA-050
-
-**Suggested commit:**
-
-```text
-feat: add team consistency metrics
-```
-
-Potential metrics:
-
-- weekly standard deviation
-- coefficient of variation where appropriate
-- median score
-- scoring floor
-- scoring ceiling
-- boom/bust frequency
-
----
-
-## FFA-054 — Strength of Schedule
-
-**Status:** BACKLOG  
-**Owner:** Data Scientist  
-**Depends on:** FFA-033
-
-**Suggested commit:**
-
-```text
-feat: add strength of schedule metrics
-```
-
-Definitions must be documented before implementation.
-
----
-
-## FFA-055 — Normalize Playoff Bracket and Final Placements
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-005
-
-**Suggested commit:**
-
-```text
-feat: normalize playoff bracket and final placements
-```
-
----
-
-## FFA-056 — League Power Ranking Model
-
-**Status:** BACKLOG  
-**Owner:** Data Scientist  
-**Depends on:** FFA-050, FFA-051, FFA-052, FFA-053, FFA-054, FFA-055
-
-**Suggested commit:**
-
-```text
-feat: add league power ranking model
-```
-
-Do not build an opaque score.
-
-The model must document:
-
-- included features
-- weights or estimation method
-- scaling
-- tie-breaking
-- interpretation
-
----
-
-## FFA-057 — Advanced League Analytics API
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-051 through FFA-056
-
-**Suggested commit:**
-
-```text
-feat: expose advanced league analytics
-```
-
-Expected interfaces may include:
-
-```python
-analysis.all_play()
-analysis.schedule_luck()
-analysis.consistency()
-analysis.strength_of_schedule()
-analysis.power_rankings()
-```
+- **FFA-050** — Weekly Scoring Ranks — DONE (`778a56b`) — see PROGRESS.md
+- **FFA-051** — All-Play Records — DONE (`4fe92e9`) — see PROGRESS.md
+- **FFA-052** — Expected Wins and Schedule Luck — DONE (`c30aa36`) — see PROGRESS.md
+- **FFA-053** — Team Consistency Metrics — DONE (`caefabc`) — see PROGRESS.md
+- **FFA-054** — Strength of Schedule — DONE (`df35d07`) — see PROGRESS.md
+- **FFA-055** — Normalize Playoff Bracket and Final Placements — DONE (`5b5acd1`) — see PROGRESS.md
+- **FFA-056** — League Power Ranking Model — DONE (`d2d9718`) — see PROGRESS.md
+- **FFA-057** — Advanced League Analytics API — DONE (`f134398`) — see PROGRESS.md
 
 ---
 
 # Epic 7 — Advanced Player / Position Analytics
 
-## FFA-060 — Define Player Data Provider Interface
-
-**Status:** BACKLOG  
-**Owner:** Software Engineer  
-**Depends on:** FFA-012
-
-**Suggested commit:**
-
-```text
-feat: define player data provider interface
-```
-
-### Goal
-
-Prevent the analytics layer from depending directly on nflverse or any other single provider.
-
----
+- **FFA-060** — Define Player Data Provider Interface — DONE (`098cff1`) — see PROGRESS.md
 
 ## FFA-061 — Add nflverse Weekly Stat Provider
 
-**Status:** BACKLOG  
+**Status:** REVIEW  
 **Owner:** Data Engineer  
 **Depends on:** FFA-060
 
@@ -1651,17 +822,22 @@ Part 7 should begin only after league-specific scoring and matchup structures ar
 
 ## READY
 
-### FFA-001 — Bootstrap Python Project
-
-This is the next ticket to implement.
+None. FFA-061's implementation is complete and awaiting review (see REVIEW
+below); no other ticket's dependencies have cleared yet.
 
 ---
 
 ## BACKLOG
 
 ```text
-FFA-002 through FFA-072
+FFA-044, FFA-062 through FFA-072
 ```
+
+FFA-044 is unblocked on paper (FFA-022 and FFA-040 are both DONE) but is
+intentionally left in BACKLOG rather than READY here since it is not the
+next ticket in the recommended sequence; an agent may still pick it up if
+explicitly assigned. FFA-062 through FFA-072 remain blocked behind FFA-061
+until it clears REVIEW and is marked DONE.
 
 Tickets become READY when their dependencies are complete and reviewed.
 
@@ -1675,13 +851,23 @@ None.
 
 ## REVIEW
 
-None.
+### FFA-061 — Add nflverse Weekly Stat Provider
+
+Implementation complete: `src/fantasy_analyzer/players/nflverse_client.py`,
+`nflverse_cache.py`, and `nflverse_provider.py` add a
+`NflverseWeeklyStatsProvider` satisfying the `PlayerStatsProvider` protocol
+from FFA-060, backed by nflverse's cumulative `player_stats.csv.gz` release
+asset, with a disk-caching layer mirroring `sleeper/cache.py`. 35 new tests
+(`tests/players/test_nflverse_{client,cache,provider}.py`) run against a
+sanitized fixture (`tests/fixtures/nflverse/player_stats.csv`), no live
+network. Full suite: 432 passed. `ruff check` clean on all touched files.
+Not yet committed. Awaiting user review before moving to DONE.
 
 ---
 
 ## DONE
 
-None.
+FFA-001 through FFA-057, FFA-060 — see PROGRESS.md.
 
 ---
 
