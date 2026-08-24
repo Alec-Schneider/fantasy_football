@@ -448,34 +448,11 @@ feat: split head-to-head results by season phase
 - **FFA-064** — Build Player-Week Fact Table — DONE (`a106cf9`) — see PROGRESS.md
 - **FFA-065** — Player Performance Metrics — DONE (`60e6c9d`) — see PROGRESS.md
 - **FFA-066** — Position Strength Analytics — DONE (`0774b17`) — see PROGRESS.md
-
-## FFA-067 — Optimal Lineup and Roster Efficiency
-
-**Status:** READY  
-**Owner:** Data Scientist  
-**Depends on:** FFA-064
-
-**Suggested commit:**
-
-```text
-feat: add optimal lineup and roster efficiency
-```
-
-### Metrics
-
-- actual starter score
-- optimal legal lineup score
-- points left on bench
-- lineup efficiency percentage
-- frequency of suboptimal start/sit decisions
-
-The optimizer must respect league roster-position rules.
-
----
+- **FFA-067** — Optimal Lineup and Roster Efficiency — DONE (`e619eb7`) — see PROGRESS.md
 
 ## FFA-068 — Replacement-Level Player Value
 
-**Status:** BACKLOG  
+**Status:** READY  
 **Owner:** Data Scientist  
 **Depends on:** FFA-065
 
@@ -712,22 +689,25 @@ Part 7 should begin only after league-specific scoring and matchup structures ar
 
 ## READY
 
-### FFA-067 — Optimal Lineup and Roster Efficiency
+### FFA-068 — Replacement-Level Player Value
 
-Its dependency, FFA-064, is DONE. This is the next ticket to implement.
+Its dependency, FFA-065, is DONE. This is the next ticket to implement.
 
 ---
 
 ## BACKLOG
 
 ```text
-FFA-044, FFA-068 through FFA-072
+FFA-044, FFA-069 through FFA-072
 ```
 
 FFA-044 is unblocked on paper (FFA-022 and FFA-040 are both DONE) but is
 intentionally left in BACKLOG rather than READY here since it is not the
 next ticket in the recommended sequence; an agent may still pick it up if
-explicitly assigned. FFA-068 through FFA-072 remain blocked behind FFA-067.
+explicitly assigned. FFA-069 (deps FFA-033, FFA-064) and FFA-070 (dep
+FFA-067) are likewise unblocked on paper and stay in BACKLOG for the same
+reason; FFA-071 and FFA-072 remain blocked behind FFA-068 and FFA-071
+respectively.
 
 Tickets become READY when their dependencies are complete and reviewed.
 
@@ -747,7 +727,7 @@ None.
 
 ## DONE
 
-FFA-001 through FFA-057, FFA-060, FFA-061, FFA-062, FFA-063, FFA-064, FFA-065, FFA-066 — see PROGRESS.md.
+FFA-001 through FFA-057, FFA-060 through FFA-067 — see PROGRESS.md.
 
 ---
 

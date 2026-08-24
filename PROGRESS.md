@@ -4,7 +4,7 @@ _Last updated by project-tracker: 2026-08-24_
 
 ## Current state
 
-Epics 1 through 6 (FFA-001 through FFA-057) are fully shipped and verified against actual code/tests, except **FFA-044** ("Split Regular Season and Playoff H2H"), which remains BACKLOG — the codebase explicitly defers it (see `src/fantasy_analyzer/analytics/head_to_head.py`). Epic 7 has shipped only its first ticket, FFA-060 (the provider interface); FFA-061 ("Add nflverse Weekly Stat Provider") is now READY since its only dependency, FFA-060, is DONE. FFA-062 through FFA-072 remain BACKLOG pending that chain. Two tickets, **FFA-007** and **FFA-014**, have no commit whose message matches their suggested one, but their acceptance criteria are genuinely satisfied — the work was absorbed into the commits for the tickets they support (fixtures landed alongside each endpoint's own commit; normalized-data tests landed alongside FFA-010/011/012/013's own commits) rather than shipped as a separate commit.
+Epics 1 through 6 (FFA-001 through FFA-057) are fully shipped and verified against actual code/tests, except **FFA-044** ("Split Regular Season and Playoff H2H"), which remains BACKLOG — the codebase explicitly defers it (see `src/fantasy_analyzer/analytics/head_to_head.py`). Epic 7 has now shipped through FFA-067: provider interface (FFA-060), nflverse provider (FFA-061), ID crosswalk (FFA-062), scoring engine (FFA-063), player-week fact table (FFA-064), performance metrics (FFA-065), position strength (FFA-066), and optimal lineup / roster efficiency (FFA-067). **FFA-068** ("Replacement-Level Player Value") is READY since its only dependency, FFA-065, is DONE. FFA-069 and FFA-070 are unblocked on paper but held in BACKLOG per the sequencing convention; FFA-071 and FFA-072 remain blocked. Two tickets, **FFA-007** and **FFA-014**, have no commit whose message matches their suggested one, but their acceptance criteria are genuinely satisfied — the work was absorbed into the commits for the tickets they support (fixtures landed alongside each endpoint's own commit; normalized-data tests landed alongside FFA-010/011/012/013's own commits) rather than shipped as a separate commit. This run also backfilled the archive entries for FFA-061 through FFA-066, which earlier chore runs compacted out of AGENTS.md without archiving (their original ticket text was recovered verbatim from AGENTS.md git history).
 
 ---
 
@@ -659,3 +659,116 @@ analysis.power_rankings()
 **Goal**
 
 Prevent the analytics layer from depending directly on nflverse or any other single provider.
+
+---
+
+### FFA-061 — Add nflverse Weekly Stat Provider
+**Commit:** `635eff8` `feat: add nflverse weekly player stats provider`
+**Owner:** Data Engineer
+**Depends on:** FFA-060
+
+**Suggested commit:** `feat: add nflverse weekly player stats provider`
+
+**Verification note:** The original AGENTS.md ticket block carried no Scope or Acceptance Criteria text beyond the suggested commit. Verified against code instead: `src/fantasy_analyzer/players/nflverse_provider.py` provides `NflverseWeeklyStatsProvider`, satisfying the FFA-060 `PlayerStatsProvider` protocol and backed by nflverse's cumulative `player_stats.csv.gz` release asset via a disk-cache layer (`nflverse_cache.py`) mirroring `sleeper/cache.py`; `tests/players/test_nflverse_provider.py` runs against the sanitized fixture `tests/fixtures/nflverse/player_stats.csv` with no network access. (This commit also created PROGRESS.md and archived FFA-001 through FFA-060.)
+
+---
+
+### FFA-062 — Build Sleeper to nflverse Player ID Crosswalk
+**Commit:** `85058c4` `feat: map Sleeper player ids to nflverse ids`
+**Owner:** Data Engineer
+**Depends on:** FFA-061
+
+**Verification note:** `src/fantasy_analyzer/players/crosswalk.py` builds the `(sleeper_player_id, gsis_id)` mapping by extracting the `gsis_id` field native to Sleeper's own player catalog — it never inspects name/position/team, so the ticket's "prefer explicit ID mappings over fuzzy name matching" constraint holds by construction.
+
+**Scope**
+
+Prefer explicit ID mappings over fuzzy name matching.
+
+---
+
+### FFA-063 — Build League-Specific Fantasy Scoring Engine
+**Commit:** `2513d33` `feat: calculate fantasy points from league scoring rules`
+**Owner:** Data Scientist
+**Depends on:** FFA-011, FFA-061
+
+**Verification note:** `src/fantasy_analyzer/players/scoring.py` derives `fantasy_points` from the league's actual Sleeper `scoring_settings` and surfaces unsupported scoring keys via `ScoringResult.unsupported_scoring_keys` rather than silently producing wrong points.
+
+**Acceptance Criteria**
+
+- scoring is derived from the actual league configuration
+- representative scoring categories are tested
+- unsupported scoring fields are surfaced clearly
+
+---
+
+### FFA-064 — Build Player-Week Fact Table
+**Commit:** `a106cf9` `feat: build player-week fantasy fact table`
+**Owner:** Data Engineer
+**Depends on:** FFA-062, FFA-063
+
+**Verification note:** `src/fantasy_analyzer/players/player_week.py` produces `PlayerWeekFactTable` with `PLAYER_WEEK_COLUMNS` — `season`, `week`, `roster_id`, `fantasy_team`, `sleeper_player_id`, `gsis_id`, `player_name`, `position`, `nfl_team`, `started`, `bench` — followed by the provider's raw stat columns and a final `fantasy_points` column. The fact table has **no `is_playoff` column**; phase filtering is the caller's job (see FFA-065/066/067 verification notes).
+
+**Scope**
+
+This becomes the foundation for all player analytics.
+
+---
+
+### FFA-065 — Player Performance Metrics
+**Commit:** `60e6c9d` `feat: add player performance analytics`
+**Owner:** Data Scientist
+**Depends on:** FFA-064
+
+**Verification note:** `src/fantasy_analyzer/players/performance.py` implements the ticket's metrics as one row per player-season describing the shape of the player's weekly scoring distribution. It is phase-agnostic — `player_week_df` (FFA-064's output) has no `is_playoff` column, so callers pre-filter by week for phase-specific views (documented in the module docstring).
+
+**Metrics**
+
+- weekly fantasy points
+- points per game
+- median score
+- volatility
+- ceiling
+- floor
+- boom rate
+- bust rate
+
+---
+
+### FFA-066 — Position Strength Analytics
+**Commit:** `0774b17` `feat: add positional strength analytics`
+**Owner:** Data Scientist
+**Depends on:** FFA-065
+
+**Verification note:** `src/fantasy_analyzer/players/position_strength.py` implements the ticket's metrics as one row per `(season, fantasy_team, position)`. Phase-agnostic like FFA-065 (the fact table has no `is_playoff` column; callers filter by week first).
+
+**Analyze**
+
+- QB production
+- RB production
+- WR production
+- TE production
+- positional league rank
+- share of roster scoring
+- positional depth
+- positional consistency
+
+---
+
+### FFA-067 — Optimal Lineup and Roster Efficiency
+**Commit:** `e619eb7` `feat: add optimal lineup and roster efficiency`
+**Owner:** Data Scientist
+**Depends on:** FFA-064
+
+**Verification note:** Implemented in `src/fantasy_analyzer/players/lineup_efficiency.py` (`build_lineup_efficiency_metrics` / `build_roster_efficiency_metrics`) with 19 new tests in `tests/players/test_lineup_efficiency.py`; full suite passes (548 tests) and `ruff check src tests` is clean. The optimal-lineup problem (assign rostered players to the league's slots, each player at most once, maximizing points, FLEX/SuperFlex eligibility) is solved exactly by a dynamic program over per-position count vectors — because every player has exactly one position the objective separates, so feasibility is tracked by the DP and each count vector's value is the sum of its positions' top-k scores. Ties break deterministically toward the manager's actual lineup, so a tie is never counted as a mistake; `NaN` fantasy points count as `0.0`; players with missing positions are ineligible for the optimal lineup. The module is phase-agnostic: the FFA-064 fact table has no `is_playoff` column (the same situation `performance.py` and `position_strength.py` document), so callers pre-filter by week for phase-specific views. Discrepancy check: the FFA-067 ticket text in AGENTS.md (current and historical) never claimed the fact table has an `is_playoff` column — the only `is_playoff` in AGENTS.md is the Canonical Matchup Dataset schema, a different table — so the module's phase-agnostic behavior is consistent with the ticket as written.
+
+**Scope**
+
+The optimizer must respect league roster-position rules.
+
+**Metrics**
+
+- actual starter score
+- optimal legal lineup score
+- points left on bench
+- lineup efficiency percentage
+- frequency of suboptimal start/sit decisions
