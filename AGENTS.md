@@ -442,29 +442,7 @@ Analytics tickets must additionally satisfy:
 - **FFA-071** — Player Analytics API — DONE (`6771979`) — see PROGRESS.md
 - **FFA-072** — Projection and Ranking Provider Interface — DONE (`7d314af`) — see PROGRESS.md
 - **FFA-069** — Matchup Player Contribution Analysis — DONE (`3289bb0`) — see PROGRESS.md
-
----
-
-## FFA-070 — Manager Lineup Tendencies
-
-**Status:** BACKLOG  
-**Owner:** Data Scientist  
-**Depends on:** FFA-067
-
-**Suggested commit:**
-
-```text
-feat: add manager lineup tendency analytics
-```
-
-Analyze:
-
-- FLEX usage
-- roster construction
-- bench allocation
-- start/sit tendencies
-- waiver-player utilization
-- positional preferences
+- **FFA-070** — Manager Lineup Tendencies — DONE (`1d6b98b`) — see PROGRESS.md
 
 ---
 
@@ -596,12 +574,11 @@ None.
 ## BACKLOG
 
 ```text
-FFA-070
+None.
 ```
 
-FFA-070 (dep FFA-067) is unblocked on paper but intentionally left in
-BACKLOG rather than READY here since it is not the next ticket in the
-recommended sequence; an agent may still pick it up if explicitly assigned.
+FFA-044, FFA-069, and FFA-070 — the three tickets previously listed here —
+are all DONE; see PROGRESS.md. Nothing currently on the board is BACKLOG.
 
 Tickets become READY when their dependencies are complete and reviewed.
 
@@ -621,8 +598,7 @@ None.
 
 ## DONE
 
-FFA-001 through FFA-057, FFA-060 through FFA-069, FFA-071, FFA-072 — see
-PROGRESS.md.
+FFA-001 through FFA-057, FFA-060 through FFA-072 — see PROGRESS.md.
 
 ---
 

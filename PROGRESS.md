@@ -887,3 +887,23 @@ Do not implement vendor-specific logic until the interface is stable.
 - positional advantages
 - player contribution to margin
 - best and worst starters
+
+---
+
+### FFA-070 — Manager Lineup Tendencies
+**Commit:** `1d6b98b` `feat: add manager lineup tendency analytics`
+**Owner:** Data Scientist
+**Depends on:** FFA-067
+
+**Verification note:** Implemented in `src/fantasy_analyzer/players/lineup_tendencies.py` with 26 new tests in `tests/players/test_lineup_tendencies.py`; full suite passes (636 tests) and `ruff check src tests` is clean. Five of the ticket's six "Analyze" bullets are implemented as one row per `(season, fantasy_team, position)` (matching `position_strength.py`'s grain): `build_roster_construction_metrics` (distinct players and rostered player-weeks per position, and each position's share of the team's total rostered player-weeks), `build_bench_allocation_metrics` (benched player-weeks per position and their team-season share; a position never benched gets no row), `build_flex_usage_metrics` (which position most often filled a FLEX-type slot in the manager's **actual** lineup — computed in closed form as the season sum of `max(0, started_count(position) - fixed_slot_count(position))` per week, rather than reusing FFA-067's optimizer, because `player_week_df` never carries a per-player slot label so there is no "actual slot assignment" to recover and this question does not need the optimizer's search; includes a standard-competition `flex_usage_rank` within each manager-season), and `build_positional_preference_metrics` (a rollup combining roster-construction, start, and bench counts/shares for one manager-season view, computed as one shared accumulation rather than three separately-merged frames to guarantee a complete, consistent position universe). The fifth, `build_start_sit_tendency_metrics`, is a thin wrapper over FFA-067's `build_roster_efficiency_metrics` (every column unchanged) plus two derived rate columns (`suboptimal_starts_per_week`, `suboptimal_sits_per_week`); it deliberately does not attempt a per-position wrong-start/wrong-sit breakdown, since FFA-067's optimizer does not expose which position each suboptimal decision belongs to and reconstructing that would be a materially larger extension of FFA-067 itself, out of this ticket's scope. All five are phase-agnostic (the FFA-064 fact table has no `is_playoff` column; callers filter by week first), matching every sibling FFA-06x module.
+
+**Scope decision — waiver-player utilization:** investigated and deliberately **not implemented**. `SleeperClient.get_transactions(league_id, week)` exists in `src/fantasy_analyzer/sleeper/client.py` and is tested against a fixture, but nothing in `src/` normalizes its output — a repo-wide search for "transaction" outside that client method and its own test/fixture found nothing. Building a usable "acquisition method per rostered player-week" dataset needs fetching transactions per week for a whole season (unlike this package's other single-shot endpoint wrappers), reconciling three transaction types' `adds`/`drops` against roster history, resolving draft-day baseline state via `get_draft_picks` (a second new data source), and designing a caching strategy and canonical schema for a genuinely new dataset — Data/Software Engineer-owned data-access work, not a Data Scientist composition on top of already-normalized data, per AGENTS.md's role split. The module docstring documents this reasoning in full and specifies what a follow-up ticket would need.
+
+**Analyze**
+
+- FLEX usage
+- roster construction
+- bench allocation
+- start/sit tendencies
+- waiver-player utilization (scoped out — see verification note)
+- positional preferences
