@@ -444,7 +444,7 @@ feat: split head-to-head results by season phase
 - **FFA-060** — Define Player Data Provider Interface — DONE (`098cff1`) — see PROGRESS.md
 - **FFA-061** — Add nflverse Weekly Stat Provider — DONE (`635eff8`) — see PROGRESS.md
 - **FFA-062** — Build Sleeper to nflverse Player ID Crosswalk — DONE (`85058c4`) — see PROGRESS.md
-- **FFA-063** — Build League-Specific Fantasy Scoring Engine — DONE (`<commit-hash>`) — see PROGRESS.md
+- **FFA-063** — Build League-Specific Fantasy Scoring Engine — DONE (`2513d33`) — see PROGRESS.md
 
 ## FFA-064 — Build Player-Week Fact Table
 
