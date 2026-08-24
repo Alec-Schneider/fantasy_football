@@ -548,6 +548,48 @@ analysis.head_to_head_matrix()
 
 ---
 
+### FFA-044 — Split Regular Season and Playoff H2H
+**Commit:** `99ecf96` `feat: split head-to-head results by season phase`
+**Owner:** Data Scientist
+**Depends on:** FFA-022, FFA-040
+
+**Verification note:** `build_head_to_head_records` (FFA-040,
+`src/fantasy_analyzer/analytics/head_to_head.py`) is unchanged: it still
+applies no `is_playoff` filter of its own, preserving the FFA-040-through-
+FFA-054 "caller filters `season_matchup_df` before calling" convention.
+FFA-044 instead adds the phase split as a layer above it, in
+`MatchupHistory` (FFA-043, `src/fantasy_analyzer/analytics/matchup_history.py`):
+two new precomputed attributes, `regular_season_head_to_head_df` and
+`playoff_head_to_head_df`, each built in `__post_init__` by pre-filtering
+`season_matchup_df` on `is_playoff` and calling the unmodified
+`build_head_to_head_records` against that slice, plus a new
+`head_to_head_by_phase(team_a, team_b)` lookup mirroring `head_to_head`'s
+shape. It returns a new frozen `HeadToHeadByPhase(roster_id,
+opponent_roster_id, regular_season, playoffs)` dataclass, where each of
+`regular_season`/`playoffs` is an `Optional[HeadToHeadPhaseRecord]` — a new,
+smaller dataclass carrying only FFA-040's record fields (meetings, wins,
+losses, ties, points), deliberately without FFA-042's rivalry statistics
+(`scored_meetings`, `avg_margin`, extremum games), since the ticket asks
+only about the head-to-head record and a phase-aware rivalry view was
+judged out of scope. Either phase field is `None` if the pair never met in
+that phase (not a zero-meetings record); the whole lookup returns `None`
+only if the pair never met in *either* phase, matching `head_to_head`'s own
+never-met `None`. The existing combined `head_to_head`/`head_to_head_df`/
+`rivalry_df`/`head_to_head_matrix` behavior is untouched and re-tested for
+regression. FFA-041 (matrix) and FFA-042 (rivalries) were not given
+phase-aware counterparts — out of scope per the ticket, which named only
+head-to-head. 15 new tests in `tests/analytics/test_matchup_history.py`,
+including a hand-built toy season with known regular-season-only,
+playoff-only, and both-phase pairings (verified by hand arithmetic in the
+test docstring), a tie within a phase, a missing-points meeting within a
+phase (counted toward `meetings`, not toward wins/losses/points), a playoff
+bye row excluded from the playoff pairing scan, unmapped-owner handling,
+directional mirroring, and empty/all-bye-season edge cases; full suite
+passes (625 tests) and `ruff check`/`ruff format --check` are clean on
+every file touched.
+
+---
+
 ## Epic 6 — Advanced League Analytics
 
 ### FFA-050 — Weekly Scoring Ranks

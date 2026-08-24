@@ -90,15 +90,42 @@ not one pair at a time, and they are already computed. This mirrors
 Regular season vs. playoffs
 ------------------------------
 
-This module inherits its inputs' scope exactly: FFA-040 and FFA-042 both
-combine **all** ``season_matchup_df`` rows, regular season and playoff
-alike, into a single combined record, so every result here is a combined
-all-games result and makes no ``is_playoff`` distinction of its own.
-Splitting by season phase is FFA-044's job and is deliberately not built in.
-A caller who wants a phase-specific view today should filter
-``season_matchup_df`` on ``is_playoff`` *before* constructing a
-:class:`MatchupHistory`. Note that :class:`RivalryGame` carries
-``is_playoff``, so a reported extremum's phase is still visible.
+``head_to_head``/``head_to_head_df``/``head_to_head_matrix``/
+``rivalry_df`` are unchanged by FFA-044 and keep inheriting their inputs'
+combined scope exactly as before: FFA-040 and FFA-042 both combine **all**
+``season_matchup_df`` rows, regular season and playoff alike, into a single
+combined record, so those results remain combined all-games results with no
+``is_playoff`` distinction. Note that :class:`RivalryGame` carries
+``is_playoff``, so a reported extremum's phase is still visible even in the
+combined view.
+
+FFA-044 ("Split Regular Season and Playoff H2H") adds a second, explicit
+way to ask the same underlying question by phase: ``regular_season_head_to_head_df``,
+``playoff_head_to_head_df``, and :meth:`~MatchupHistory.head_to_head_by_phase`.
+Strictly, a caller could already get a phase-scoped table today by filtering
+``season_matchup_df`` on ``is_playoff`` and calling
+``build_head_to_head_records`` twice, before ever constructing a
+:class:`MatchupHistory` -- nothing about that path was blocked. What FFA-044
+adds is doing that filtering-and-calling *once*, at construction, or having a
+single-pair lookup that has already done the filtering-and-calling-twice
+work: without it, "does A lead B in the regular season but trail in the
+playoffs" requires a caller to build two separate filtered
+``season_matchup_df`` slices, construct two separate ``MatchupHistory``
+instances (or call ``build_head_to_head_records`` directly, bypassing this
+service and its owner-label resolution and rivalry composition entirely),
+and remember to compare the right two rows by hand -- for every pair, on
+every call. ``regular_season_head_to_head_df``/``playoff_head_to_head_df``
+are computed once, in ``__post_init__``, using the exact same
+"pre-filter ``season_matchup_df``, then call FFA-040's unmodified
+``build_head_to_head_records``" approach a caller would otherwise do
+manually -- this module still applies **no** ``is_playoff`` filter inside
+``build_head_to_head_records`` itself (that low-level builder's signature
+and behavior are untouched; see its own module docstring), preserving the
+FFA-040-through-FFA-054 "filter before calling, not inside the builder"
+convention exactly. FFA-041 (the matrix) and FFA-042 (rivalries) are
+deliberately not given a phase-aware counterpart here: the ticket asks only
+about head-to-head, and a phase-aware matrix or rivalry table is a
+reasonable but separate future extension, not required to satisfy FFA-044.
 
 Missing values / edge cases
 ----------------------------
@@ -115,6 +142,19 @@ Missing values / edge cases
 - **A meeting with missing points**: counted in ``meetings`` but not in
   ``scored_meetings``, and excluded from every margin statistic, so
   ``avg_margin`` may be ``NaN`` while ``meetings >= 1``.
+- **A pair that met in only one phase**: :meth:`~MatchupHistory.head_to_head_by_phase`
+  returns a :class:`HeadToHeadByPhase` with the other phase's field
+  ``None`` -- this is not the same as "never met" (which returns ``None``
+  outright) and is the expected shape for e.g. two rosters who only played
+  each other in the regular season.
+- **A pair that never met in either phase**:
+  :meth:`~MatchupHistory.head_to_head_by_phase` returns ``None``, the
+  phase-split analog of ``head_to_head``'s own never-met ``None``.
+- **Empty ``season_matchup_df`` (phase split)**: ``regular_season_head_to_head_df``
+  and ``playoff_head_to_head_df`` are both empty (with
+  :data:`~fantasy_analyzer.analytics.head_to_head.HEAD_TO_HEAD_COLUMNS`),
+  and every :meth:`~MatchupHistory.head_to_head_by_phase` lookup returns
+  ``None``, mirroring the combined-view empty-season behavior above.
 """
 
 from __future__ import annotations
@@ -195,6 +235,86 @@ class HeadToHeadHistory:
     highest_scoring_matchup: Optional[RivalryGame]
 
 
+@dataclass(frozen=True)
+class HeadToHeadPhaseRecord:
+    """One ordered pair's head-to-head record confined to one season phase (FFA-044).
+
+    The phase-scoped counterpart of FFA-040's raw ``head_to_head_df`` row:
+    every field is copied verbatim from a single row of
+    :func:`~fantasy_analyzer.analytics.head_to_head.build_head_to_head_records`'s
+    output, called against a ``season_matchup_df`` slice that has already
+    been pre-filtered to one phase (regular season or playoffs) by
+    ``is_playoff``. See ``analytics/head_to_head.py``'s module docstring for
+    the underlying metric definitions (meetings, wins/losses/ties,
+    avg_points, the bye/missing-points rules) -- this dataclass defines no
+    metric of its own. Unlike :class:`HeadToHeadHistory`, it carries no
+    rivalry statistics (``scored_meetings``, ``avg_margin``, and the
+    extremum games): FFA-044 asks only about the head-to-head record, and a
+    phase-aware rivalry view is out of scope here -- see
+    :meth:`MatchupHistory.head_to_head_by_phase`.
+
+    Attributes:
+        roster_id: The perspective roster.
+        opponent_roster_id: The opponent roster.
+        owner: ``roster_id``'s owner display label, or ``None`` if unmapped.
+        opponent_owner: ``opponent_roster_id``'s owner label, or ``None``.
+        meetings: Times the pair met in this phase, per FFA-040. Always
+            ``>= 1`` -- a phase with zero meetings between the pair produces
+            no :class:`HeadToHeadPhaseRecord` at all (``None``), not a
+            zero-``meetings`` one.
+        wins: ``roster_id``'s wins over ``opponent_roster_id`` in this phase.
+        losses: ``roster_id``'s losses to ``opponent_roster_id`` in this
+            phase.
+        ties: Ties between the two in this phase.
+        total_points: ``roster_id``'s points summed over this phase's
+            meetings.
+        total_opponent_points: The opponent's points over the same meetings.
+        avg_points: ``total_points / meetings``.
+        avg_opponent_points: ``total_opponent_points / meetings``.
+    """
+
+    roster_id: int
+    opponent_roster_id: int
+    owner: Optional[str]
+    opponent_owner: Optional[str]
+    meetings: int
+    wins: int
+    losses: int
+    ties: int
+    total_points: float
+    total_opponent_points: float
+    avg_points: float
+    avg_opponent_points: float
+
+
+@dataclass(frozen=True)
+class HeadToHeadByPhase:
+    """Regular-season and playoff head-to-head records for one ordered pair (FFA-044).
+
+    The phase-split counterpart of :class:`HeadToHeadHistory`: instead of
+    one combined regular-season-plus-playoff record, this packs two
+    independently-computed :class:`HeadToHeadPhaseRecord` values, one per
+    phase. Either field may be ``None`` if the pair never met in that
+    phase -- e.g. two rosters who only ever met in the regular season, or a
+    pair whose only meeting was a playoff game. At least one of the two
+    fields is non-``None`` whenever a :class:`HeadToHeadByPhase` is returned
+    at all; see :meth:`MatchupHistory.head_to_head_by_phase`.
+
+    Attributes:
+        roster_id: The perspective roster (``team_a`` in the lookup).
+        opponent_roster_id: The opponent roster (``team_b``).
+        regular_season: The pair's regular-season-only record, or ``None``
+            if they never met in the regular season.
+        playoffs: The pair's playoff-only record, or ``None`` if they never
+            met in the playoffs.
+    """
+
+    roster_id: int
+    opponent_roster_id: int
+    regular_season: Optional[HeadToHeadPhaseRecord]
+    playoffs: Optional[HeadToHeadPhaseRecord]
+
+
 def _pair_row(df: pd.DataFrame, roster_id: int, opponent_roster_id: int) -> pd.Series:
     """Return the single row of ``df`` for an ordered pair, or an empty Series.
 
@@ -210,6 +330,32 @@ def _pair_row(df: pd.DataFrame, roster_id: int, opponent_roster_id: int) -> pd.S
     if match.empty:
         return pd.Series(dtype=object)
     return match.iloc[0]
+
+
+def _phase_record(
+    df: pd.DataFrame, roster_id: int, opponent_roster_id: int
+) -> Optional[HeadToHeadPhaseRecord]:
+    """Return the ordered pair's :class:`HeadToHeadPhaseRecord` from a
+    phase-filtered ``head_to_head_df``, or ``None`` if the pair never met in
+    that phase.
+    """
+    record = _pair_row(df, roster_id, opponent_roster_id)
+    if record.empty:
+        return None
+    return HeadToHeadPhaseRecord(
+        roster_id=int(record["roster_id"]),
+        opponent_roster_id=int(record["opponent_roster_id"]),
+        owner=record["owner"],
+        opponent_owner=record["opponent_owner"],
+        meetings=int(record["meetings"]),
+        wins=int(record["wins"]),
+        losses=int(record["losses"]),
+        ties=int(record["ties"]),
+        total_points=float(record["total_points"]),
+        total_opponent_points=float(record["total_opponent_points"]),
+        avg_points=float(record["avg_points"]),
+        avg_opponent_points=float(record["avg_opponent_points"]),
+    )
 
 
 @dataclass(frozen=True)
@@ -236,12 +382,22 @@ class MatchupHistory:
             every ordered pair that met, computed once at construction.
         rivalry_df: FFA-042's full ``RIVALRY_COLUMNS`` table for the same
             pairs, computed once at construction.
+        regular_season_head_to_head_df: FFA-044's regular-season-only
+            counterpart of ``head_to_head_df``: FFA-040's
+            ``build_head_to_head_records`` called against
+            ``season_matchup_df[season_matchup_df["is_playoff"] == False]``,
+            computed once at construction. See the module docstring's
+            "Regular season vs. playoffs" section.
+        playoff_head_to_head_df: FFA-044's playoff-only counterpart, built
+            the same way against ``is_playoff == True``.
     """
 
     season_matchup_df: pd.DataFrame
     teams_df: pd.DataFrame
     head_to_head_df: pd.DataFrame = field(init=False)
     rivalry_df: pd.DataFrame = field(init=False)
+    regular_season_head_to_head_df: pd.DataFrame = field(init=False)
+    playoff_head_to_head_df: pd.DataFrame = field(init=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -253,6 +409,30 @@ class MatchupHistory:
             self,
             "rivalry_df",
             build_rivalry_records(self.season_matchup_df, self.teams_df),
+        )
+        # FFA-044: pre-filter season_matchup_df by is_playoff, then call
+        # FFA-040's unmodified build_head_to_head_records against each
+        # slice -- the same "caller filters, builder stays phase-agnostic"
+        # convention the module docstring documents, done once here instead
+        # of by every caller. An empty season_matchup_df filters down to two
+        # empty slices, each of which build_head_to_head_records already
+        # turns into an empty, correctly-columned frame.
+        is_playoff = self.season_matchup_df["is_playoff"]
+        object.__setattr__(
+            self,
+            "regular_season_head_to_head_df",
+            build_head_to_head_records(
+                self.season_matchup_df[is_playoff == False],  # noqa: E712
+                self.teams_df,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "playoff_head_to_head_df",
+            build_head_to_head_records(
+                self.season_matchup_df[is_playoff == True],  # noqa: E712
+                self.teams_df,
+            ),
         )
 
     def head_to_head(self, team_a: int, team_b: int) -> Optional[HeadToHeadHistory]:
@@ -305,6 +485,50 @@ class MatchupHistory:
             largest_win=rivalry["largest_win"],
             largest_loss=rivalry["largest_loss"],
             highest_scoring_matchup=rivalry["highest_scoring_matchup"],
+        )
+
+    def head_to_head_by_phase(
+        self, team_a: int, team_b: int
+    ) -> Optional[HeadToHeadByPhase]:
+        """Return ``team_a``'s history against ``team_b``, split by season phase.
+
+        FFA-044: looks up the ordered pair independently in the cached
+        ``regular_season_head_to_head_df`` and ``playoff_head_to_head_df``
+        (each already pre-filtered on ``is_playoff`` and built by FFA-040's
+        unmodified ``build_head_to_head_records`` -- see the module
+        docstring's "Regular season vs. playoffs" section) and packs the two
+        into a single :class:`HeadToHeadByPhase`. Every value is copied
+        verbatim from those frames; no metric is recomputed here, and this
+        method carries no rivalry statistics (unlike :meth:`head_to_head`) --
+        see :class:`HeadToHeadPhaseRecord`.
+
+        Args:
+            team_a: The perspective roster's ``roster_id``. Owner display
+                names are deliberately not accepted -- see the module
+                docstring's "Lookup key".
+            team_b: The opponent roster's ``roster_id``.
+
+        Returns:
+            A :class:`HeadToHeadByPhase` from ``team_a``'s perspective, or
+            ``None`` if the two rosters never met in *either* phase (which
+            includes ``team_a == team_b`` and any roster id absent from the
+            season -- the same "never met" cases :meth:`head_to_head`
+            returns ``None`` for). A pair that met in only one phase still
+            returns a :class:`HeadToHeadByPhase`, with the other phase's
+            ``regular_season``/``playoffs`` field ``None``.
+        """
+        regular_season = _phase_record(
+            self.regular_season_head_to_head_df, team_a, team_b
+        )
+        playoffs = _phase_record(self.playoff_head_to_head_df, team_a, team_b)
+        if regular_season is None and playoffs is None:
+            return None
+
+        return HeadToHeadByPhase(
+            roster_id=team_a,
+            opponent_roster_id=team_b,
+            regular_season=regular_season,
+            playoffs=playoffs,
         )
 
     def head_to_head_matrix(self) -> pd.DataFrame:

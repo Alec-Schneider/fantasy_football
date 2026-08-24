@@ -1,4 +1,4 @@
-"""Tests for the MatchupHistory composition service (FFA-043).
+"""Tests for the MatchupHistory composition service (FFA-043, FFA-044).
 
 ``MatchupHistory`` is pure composition over ``build_head_to_head_records``
 (FFA-040), ``build_head_to_head_matrix``/``format_head_to_head_matrix``
@@ -8,6 +8,14 @@ equal what calling those functions directly would produce (the composition is
 wired to the right inputs), and that one small hand-built toy season resolves
 to the hand-computed combined record + rivalry numbers, per AGENTS.md's
 requirement for a hand-checkable example.
+
+FFA-044's phase split (``regular_season_head_to_head_df``,
+``playoff_head_to_head_df``, ``head_to_head_by_phase``) is tested the same
+way: its outputs must equal calling ``build_head_to_head_records`` directly
+against an ``is_playoff``-filtered slice of ``season_matchup_df`` (proving
+the "pre-filter, then call the unmodified builder" composition), and one
+hand-built toy season with known regular-season-only, playoff-only, and
+both-phase meetings resolves to hand-computed numbers per phase.
 
 Inputs are hand-built ``season_matchup_df``/``teams_df`` frames -- no HTTP
 calls -- using the same helpers as ``test_head_to_head.py`` /
@@ -20,8 +28,10 @@ import pandas as pd
 import pytest
 
 from fantasy_analyzer.analytics import (
+    HeadToHeadByPhase,
     HeadToHeadCell,
     HeadToHeadHistory,
+    HeadToHeadPhaseRecord,
     MatchupHistory,
     RivalryGame,
     build_head_to_head_matrix,
@@ -566,3 +576,395 @@ def test_build_matchup_history_factory_matches_direct_construction() -> None:
     )
     pd.testing.assert_frame_equal(via_factory.rivalry_df, via_constructor.rivalry_df)
     assert via_factory.head_to_head(1, 2) == via_constructor.head_to_head(1, 2)
+
+
+# ---------------------------------------------------------------------------
+# FFA-044: regular season vs. playoff head-to-head split
+# ---------------------------------------------------------------------------
+
+
+def _phase_toy_rows() -> list[dict]:
+    """Three rosters; a mix of regular-season-only, playoff-only, and
+    both-phase pairings, plus a missing-points playoff meeting and a
+    playoff bye row.
+
+    Regular season (weeks 1-3):
+        Week 1 (matchup 1): roster 1 (130.0) beats roster 2 (100.0).
+        Week 2 (matchup 2): roster 1 (90.0) ties roster 2 (90.0).
+        Week 3 (matchup 3): roster 1 (80.0) beats roster 3 (60.0).
+
+    Playoffs (weeks 4-8):
+        Week 4 (matchup 1): roster 2 (150.0) beats roster 1 (140.0) -- a
+            rematch with roster 1 as ``roster_2_id``, exercising both
+            pairing directions.
+        Week 5 (matchup 2): roster 1 (120.0) beats roster 2 (110.0).
+        Week 6 (matchup 3): roster 2 (200.0) beats roster 3 (190.0) -- 2 vs 3
+            meet only here, only in the playoffs.
+        Week 7 (matchup 4): roster 1 vs roster 2, both scores missing --
+            still a meeting, contributes to neither wins/losses/ties nor
+            points.
+        Week 8 (matchup ``None``): roster 1 on a bye -- no opponent, must
+            not create or contribute to any pair in either phase.
+
+    Hand-computed roster 1 vs roster 2, regular season only (weeks 1-2):
+        meetings=2, wins=1, losses=0, ties=1
+        total_points = 130.0 + 90.0 = 220.0 -> avg_points = 110.0
+        total_opponent_points = 100.0 + 90.0 = 190.0 -> avg_opponent_points = 95.0
+
+    Hand-computed roster 1 vs roster 2, playoffs only (weeks 4, 5, 7):
+        meetings=3 (the missing-points week 7 meeting still counts),
+        wins=1 (week 5), losses=1 (week 4), ties=0
+        total_points = 140.0 + 120.0 = 260.0 (week 7 contributes nothing)
+        total_opponent_points = 150.0 + 110.0 = 260.0
+        avg_points = avg_opponent_points = 260.0 / 3
+
+    Hand-computed roster 1 vs roster 2, combined (unfiltered, for regression):
+        meetings = 2 + 3 = 5, wins = 1 + 1 = 2, losses = 0 + 1 = 1,
+        ties = 1 + 0 = 1
+        total_points = 220.0 + 260.0 = 480.0
+        total_opponent_points = 190.0 + 260.0 = 450.0
+
+    Hand-computed roster 1 vs roster 3: regular season only, one meeting
+    (week 3): meetings=1, wins=1, losses=0, ties=0,
+    total_points=80.0, total_opponent_points=60.0. No playoff meeting.
+
+    Hand-computed roster 2 vs roster 3: playoffs only, one meeting (week 6):
+    meetings=1, wins=1, losses=0, ties=0,
+    total_points=200.0, total_opponent_points=190.0. No regular-season
+    meeting.
+    """
+    return [
+        _matchup_row(
+            roster_1_id=1,
+            roster_2_id=2,
+            points_1=130.0,
+            points_2=100.0,
+            winner=1,
+            loser=2,
+            week=1,
+            matchup_id=1,
+            is_playoff=False,
+        ),
+        _matchup_row(
+            roster_1_id=1,
+            roster_2_id=2,
+            points_1=90.0,
+            points_2=90.0,
+            winner=None,
+            loser=None,
+            is_tie=True,
+            week=2,
+            matchup_id=2,
+            is_playoff=False,
+        ),
+        _matchup_row(
+            roster_1_id=1,
+            roster_2_id=3,
+            points_1=80.0,
+            points_2=60.0,
+            winner=1,
+            loser=3,
+            week=3,
+            matchup_id=3,
+            is_playoff=False,
+        ),
+        _matchup_row(
+            roster_1_id=2,
+            roster_2_id=1,
+            points_1=150.0,
+            points_2=140.0,
+            winner=2,
+            loser=1,
+            week=4,
+            matchup_id=1,
+            is_playoff=True,
+        ),
+        _matchup_row(
+            roster_1_id=1,
+            roster_2_id=2,
+            points_1=120.0,
+            points_2=110.0,
+            winner=1,
+            loser=2,
+            week=5,
+            matchup_id=2,
+            is_playoff=True,
+        ),
+        _matchup_row(
+            roster_1_id=2,
+            roster_2_id=3,
+            points_1=200.0,
+            points_2=190.0,
+            winner=2,
+            loser=3,
+            week=6,
+            matchup_id=3,
+            is_playoff=True,
+        ),
+        _matchup_row(
+            roster_1_id=1,
+            roster_2_id=2,
+            points_1=None,
+            points_2=None,
+            winner=None,
+            loser=None,
+            week=7,
+            matchup_id=4,
+            is_playoff=True,
+        ),
+        _matchup_row(
+            roster_1_id=1,
+            roster_2_id=None,
+            points_1=100.0,
+            points_2=None,
+            winner=None,
+            loser=None,
+            week=8,
+            matchup_id=None,
+            is_playoff=True,
+        ),
+    ]
+
+
+def _phase_toy_history() -> MatchupHistory:
+    return MatchupHistory(
+        season_matchup_df=_season_matchup_df(_phase_toy_rows()),
+        teams_df=_toy_teams_df(),
+    )
+
+
+def test_regular_season_head_to_head_df_matches_filtered_direct_call() -> None:
+    season_matchup_df = _season_matchup_df(_phase_toy_rows())
+    teams_df = _toy_teams_df()
+    history = MatchupHistory(season_matchup_df=season_matchup_df, teams_df=teams_df)
+
+    expected = build_head_to_head_records(
+        season_matchup_df[season_matchup_df["is_playoff"] == False],  # noqa: E712
+        teams_df,
+    )
+    pd.testing.assert_frame_equal(history.regular_season_head_to_head_df, expected)
+
+
+def test_playoff_head_to_head_df_matches_filtered_direct_call() -> None:
+    season_matchup_df = _season_matchup_df(_phase_toy_rows())
+    teams_df = _toy_teams_df()
+    history = MatchupHistory(season_matchup_df=season_matchup_df, teams_df=teams_df)
+
+    expected = build_head_to_head_records(
+        season_matchup_df[season_matchup_df["is_playoff"] == True],  # noqa: E712
+        teams_df,
+    )
+    pd.testing.assert_frame_equal(history.playoff_head_to_head_df, expected)
+
+
+def test_head_to_head_by_phase_toy_example_hand_computed() -> None:
+    """Roster 1 vs roster 2 met in both phases; both splits match the hand
+    computation in ``_phase_toy_rows``.
+    """
+    history = _phase_toy_history()
+
+    result = history.head_to_head_by_phase(1, 2)
+
+    assert isinstance(result, HeadToHeadByPhase)
+    assert result.roster_id == 1
+    assert result.opponent_roster_id == 2
+
+    regular_season = result.regular_season
+    assert isinstance(regular_season, HeadToHeadPhaseRecord)
+    assert regular_season.owner == "Alec"
+    assert regular_season.opponent_owner == "Mike"
+    assert regular_season.meetings == 2
+    assert regular_season.wins == 1
+    assert regular_season.losses == 0
+    assert regular_season.ties == 1
+    assert regular_season.total_points == pytest.approx(220.0)
+    assert regular_season.total_opponent_points == pytest.approx(190.0)
+    assert regular_season.avg_points == pytest.approx(110.0)
+    assert regular_season.avg_opponent_points == pytest.approx(95.0)
+
+    playoffs = result.playoffs
+    assert isinstance(playoffs, HeadToHeadPhaseRecord)
+    assert playoffs.meetings == 3
+    assert playoffs.wins == 1
+    assert playoffs.losses == 1
+    assert playoffs.ties == 0
+    assert playoffs.total_points == pytest.approx(260.0)
+    assert playoffs.total_opponent_points == pytest.approx(260.0)
+    assert playoffs.avg_points == pytest.approx(260.0 / 3)
+    assert playoffs.avg_opponent_points == pytest.approx(260.0 / 3)
+
+
+def test_head_to_head_by_phase_is_directional() -> None:
+    """``head_to_head_by_phase(2, 1)`` mirrors ``(1, 2)`` -- wins/losses
+    swapped, points swapped, per phase.
+    """
+    history = _phase_toy_history()
+
+    a_vs_b = history.head_to_head_by_phase(1, 2)
+    b_vs_a = history.head_to_head_by_phase(2, 1)
+
+    assert b_vs_a.regular_season.wins == a_vs_b.regular_season.losses == 0
+    assert b_vs_a.regular_season.losses == a_vs_b.regular_season.wins == 1
+    assert b_vs_a.regular_season.ties == a_vs_b.regular_season.ties == 1
+    assert b_vs_a.playoffs.wins == a_vs_b.playoffs.losses == 1
+    assert b_vs_a.playoffs.losses == a_vs_b.playoffs.wins == 1
+    assert b_vs_a.playoffs.total_points == pytest.approx(
+        a_vs_b.playoffs.total_opponent_points
+    )
+
+
+def test_head_to_head_by_phase_regular_season_only_pair_has_no_playoffs() -> None:
+    """Rosters 1 and 3 only ever met in the regular season (week 3): the
+    ``playoffs`` field is ``None``, not a zero-meetings record.
+    """
+    history = _phase_toy_history()
+
+    result = history.head_to_head_by_phase(1, 3)
+
+    assert result.regular_season is not None
+    assert result.regular_season.meetings == 1
+    assert result.regular_season.wins == 1
+    assert result.regular_season.total_points == pytest.approx(80.0)
+    assert result.regular_season.total_opponent_points == pytest.approx(60.0)
+    assert result.playoffs is None
+
+
+def test_head_to_head_by_phase_playoff_only_pair_has_no_regular_season() -> None:
+    """Rosters 2 and 3 only ever met in the playoffs (week 6): the
+    ``regular_season`` field is ``None``, not a zero-meetings record.
+    """
+    history = _phase_toy_history()
+
+    result = history.head_to_head_by_phase(2, 3)
+
+    assert result.regular_season is None
+    assert result.playoffs is not None
+    assert result.playoffs.meetings == 1
+    assert result.playoffs.wins == 1
+    assert result.playoffs.total_points == pytest.approx(200.0)
+    assert result.playoffs.total_opponent_points == pytest.approx(190.0)
+
+
+def test_head_to_head_by_phase_missing_points_meeting_counted_but_not_scored() -> None:
+    """The week 7 playoff meeting between rosters 1 and 2 has no points on
+    either side: it counts toward ``meetings`` but contributes to none of
+    ``wins``/``losses``/``ties`` and nothing to the point totals -- the same
+    FFA-040 rule, applied within the playoff-only slice.
+    """
+    history = _phase_toy_history()
+
+    playoffs = history.head_to_head_by_phase(1, 2).playoffs
+
+    # meetings=3 (weeks 4, 5, 7) but only weeks 4 and 5 are decided.
+    assert playoffs.meetings == 3
+    assert playoffs.wins + playoffs.losses + playoffs.ties == 2
+    # Only weeks 4 (140.0) and 5 (120.0) contribute points; week 7 adds 0.
+    assert playoffs.total_points == pytest.approx(140.0 + 120.0)
+
+
+def test_head_to_head_by_phase_bye_row_excluded_within_phase() -> None:
+    """The week 8 playoff bye (roster 1, no opponent) must not create a pair
+    or inflate any playoff meeting count. The playoff table has exactly the
+    four directional rows implied by the three real playoff pairings (1v2,
+    2v1, 2v3, 3v2) -- no bye-derived row, and 1 vs 3 has no playoff row at
+    all since they never met in the playoffs.
+    """
+    history = _phase_toy_history()
+
+    playoff_pairs = set(
+        zip(
+            history.playoff_head_to_head_df["roster_id"],
+            history.playoff_head_to_head_df["opponent_roster_id"],
+        )
+    )
+    assert playoff_pairs == {(1, 2), (2, 1), (2, 3), (3, 2)}
+
+
+def test_head_to_head_by_phase_never_met_returns_none() -> None:
+    """A roster id absent from the season is never-met in either phase."""
+    history = _phase_toy_history()
+
+    assert history.head_to_head_by_phase(1, 99) is None
+    assert history.head_to_head_by_phase(99, 1) is None
+
+
+def test_head_to_head_by_phase_same_roster_returns_none() -> None:
+    assert _phase_toy_history().head_to_head_by_phase(1, 1) is None
+
+
+def test_head_to_head_by_phase_unmapped_owner_is_none_rather_than_raising() -> None:
+    history = MatchupHistory(
+        season_matchup_df=_season_matchup_df(_phase_toy_rows()),
+        teams_df=_teams_df([_team_row(1, "Alec")]),
+    )
+
+    result = history.head_to_head_by_phase(1, 2)
+    assert result.regular_season.owner == "Alec"
+    assert result.regular_season.opponent_owner is None
+    assert result.playoffs.owner == "Alec"
+    assert result.playoffs.opponent_owner is None
+
+
+def test_head_to_head_by_phase_values_are_plain_python_scalars() -> None:
+    result = _phase_toy_history().head_to_head_by_phase(1, 2)
+
+    assert type(result.regular_season.meetings) is int
+    assert type(result.regular_season.wins) is int
+    assert type(result.regular_season.total_points) is float
+    assert type(result.playoffs.avg_points) is float
+
+
+def test_combined_head_to_head_unaffected_by_phase_split() -> None:
+    """The pre-existing combined ``head_to_head``/``head_to_head_df`` must
+    keep returning the exact same all-phases numbers after FFA-044's
+    phase-split attributes were added -- 5 combined meetings, matching
+    regular season (2) plus playoffs (3).
+    """
+    history = _phase_toy_history()
+
+    combined = history.head_to_head(1, 2)
+    assert combined.meetings == 5
+    assert combined.wins == 2
+    assert combined.losses == 1
+    assert combined.ties == 1
+    assert combined.total_points == pytest.approx(480.0)
+    assert combined.total_opponent_points == pytest.approx(450.0)
+
+    direct = build_head_to_head_records(
+        _season_matchup_df(_phase_toy_rows()), _toy_teams_df()
+    )
+    pd.testing.assert_frame_equal(history.head_to_head_df, direct)
+
+
+def test_empty_season_head_to_head_by_phase_frames_and_lookups() -> None:
+    history = MatchupHistory(
+        season_matchup_df=_season_matchup_df([]), teams_df=_teams_df([])
+    )
+
+    assert history.regular_season_head_to_head_df.empty
+    assert history.playoff_head_to_head_df.empty
+    assert history.head_to_head_by_phase(1, 2) is None
+
+
+def test_all_bye_season_head_to_head_by_phase_frames_and_lookups() -> None:
+    rows = [
+        _matchup_row(
+            roster_1_id=1,
+            roster_2_id=None,
+            points_1=55.5,
+            points_2=None,
+            winner=None,
+            loser=None,
+            matchup_id=None,
+            is_playoff=is_playoff,
+            week=week,
+        )
+        for week, is_playoff in ((1, False), (2, True))
+    ]
+    history = MatchupHistory(
+        season_matchup_df=_season_matchup_df(rows), teams_df=_teams_df([])
+    )
+
+    assert history.regular_season_head_to_head_df.empty
+    assert history.playoff_head_to_head_df.empty
+    assert history.head_to_head_by_phase(1, 2) is None

@@ -25,7 +25,9 @@ from fantasy_analyzer.analytics.league_analytics import (
     build_league_analytics,
 )
 from fantasy_analyzer.analytics.matchup_history import (
+    HeadToHeadByPhase,
     HeadToHeadHistory,
+    HeadToHeadPhaseRecord,
     MatchupHistory,
     build_matchup_history,
 )
@@ -83,8 +85,10 @@ __all__ = [
     "HEAD_TO_HEAD_COLUMNS",
     "HEAD_TO_HEAD_MATRIX_DIAGONAL",
     "HEAD_TO_HEAD_MATRIX_NO_MEETING",
+    "HeadToHeadByPhase",
     "HeadToHeadCell",
     "HeadToHeadHistory",
+    "HeadToHeadPhaseRecord",
     "LeagueAnalytics",
     "LeagueSummary",
     "LeagueSummaryView",
