@@ -35,6 +35,12 @@ from fantasy_analyzer.players.performance import (
     PLAYER_PERFORMANCE_COLUMNS,
     build_player_performance_metrics,
 )
+from fantasy_analyzer.players.player_value import (
+    PLAYER_VALUE_COLUMNS,
+    POSITION_SCARCITY_COLUMNS,
+    build_player_value_metrics,
+    build_position_scarcity_metrics,
+)
 from fantasy_analyzer.players.player_week import (
     PLAYER_WEEK_COLUMNS,
     PlayerWeekFactTable,
@@ -92,6 +98,10 @@ __all__ = [
     "MIN_WEEKS_FOR_DISPERSION",
     "MIN_WEEKS_FOR_BOOM_BUST",
     "build_position_strength_metrics",
+    "PLAYER_VALUE_COLUMNS",
+    "POSITION_SCARCITY_COLUMNS",
+    "build_player_value_metrics",
+    "build_position_scarcity_metrics",
     "LINEUP_EFFICIENCY_COLUMNS",
     "ROSTER_EFFICIENCY_COLUMNS",
     "build_lineup_efficiency_metrics",
