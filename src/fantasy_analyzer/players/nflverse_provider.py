@@ -1,10 +1,11 @@
 """nflverse-backed implementation of :class:`PlayerStatsProvider` (FFA-061).
 
-This module normalizes nflverse's raw cumulative weekly player-stats table
-(downloaded/cached via ``nflverse_client``/``nflverse_cache``) into the
-canonical shape defined by ``fantasy_analyzer.players.provider``, and
-exposes :class:`NflverseWeeklyStatsProvider`, a concrete provider that
-satisfies :class:`~fantasy_analyzer.players.provider.PlayerStatsProvider`
+This module normalizes nflverse's raw, per-season weekly player-stats table
+(downloaded/cached one season at a time via ``nflverse_client``/
+``nflverse_cache``) into the canonical shape defined by
+``fantasy_analyzer.players.provider``, and exposes
+:class:`NflverseWeeklyStatsProvider`, a concrete provider that satisfies
+:class:`~fantasy_analyzer.players.provider.PlayerStatsProvider`
 structurally (see that module's docstring for why ``Protocol`` conformance
 requires no inheritance).
 
@@ -12,8 +13,9 @@ Column mapping
 --------------
 
 nflverse's raw column names (verified against the live
-``player_stats.csv.gz`` release asset as of this ticket) map to the
-required identity columns as follows:
+``stats_player_week_<season>.csv.gz`` release asset -- see
+``nflverse_client``'s module docstring for the release-tag migration this
+reflects) map to the required identity columns as follows:
 
 ================  =====================================================
 Identity column   nflverse source column
@@ -83,7 +85,7 @@ import pandas as pd
 
 from fantasy_analyzer.players.crosswalk import gsis_to_sleeper_lookup
 from fantasy_analyzer.players.nflverse_cache import (
-    DEFAULT_CACHE_PATH,
+    DEFAULT_CACHE_DIR,
     get_player_stats_cached,
 )
 from fantasy_analyzer.players.nflverse_client import NflverseClient
@@ -132,10 +134,12 @@ def normalize_player_stats(
     """Filter and reshape nflverse's raw stats table to one canonical week.
 
     Args:
-        raw: nflverse's raw, unfiltered player-stats table, as returned by
-            ``NflverseClient.download_player_stats()`` (or a cached copy of
-            it) -- one row per observed player-week across every
-            season/week nflverse has published.
+        raw: nflverse's raw, unfiltered player-stats table for one season,
+            as returned by ``NflverseClient.download_player_stats(season)``
+            (or a cached copy of it) -- one row per observed player-week.
+            ``season``/``week`` are still explicit filter arguments (not
+            inferred from ``raw``) since a caller may pass any DataFrame
+            with the right shape, e.g. a multi-season fixture in tests.
         season: The NFL season to filter to.
         week: The NFL week number to filter to.
         id_crosswalk: An optional Sleeper<->nflverse ID crosswalk, as
@@ -193,25 +197,27 @@ class NflverseWeeklyStatsProvider:
     implementing ``weekly_stats(season, week) -> pd.DataFrame``. See the
     module docstring for the column mapping and stat-column choices.
 
-    The underlying cumulative table is downloaded/loaded from cache at most
-    once per provider instance, on the first ``weekly_stats`` call, and
-    reused in memory for every subsequent call on that instance -- callers
-    that want a fresh download mid-session should construct a new provider
-    (or pass ``force_refresh=True``, which affects only that first load).
+    Each season's table is downloaded/loaded from cache at most once per
+    provider instance -- on the first ``weekly_stats`` call for that
+    season -- and reused in memory for every subsequent call on that same
+    season; a different season triggers its own cache lookup/download the
+    first time it is requested. Callers that want a fresh download
+    mid-session should construct a new provider (or pass
+    ``force_refresh=True``, which affects only each season's first load).
     """
 
     def __init__(
         self,
         client: Optional[NflverseClient] = None,
-        cache_path: Union[str, Path] = DEFAULT_CACHE_PATH,
+        cache_dir: Union[str, Path] = DEFAULT_CACHE_DIR,
         force_refresh: bool = False,
         id_crosswalk: Optional[pd.DataFrame] = None,
     ) -> None:
         self._client = client or NflverseClient()
-        self._cache_path = cache_path
+        self._cache_dir = cache_dir
         self._force_refresh = force_refresh
         self._id_crosswalk = id_crosswalk
-        self._raw: Optional[pd.DataFrame] = None
+        self._raw_by_season: dict[int, pd.DataFrame] = {}
 
     def weekly_stats(self, season: int, week: int) -> pd.DataFrame:
         """Return nflverse's player statistics for ``season``/``week``.
@@ -223,11 +229,14 @@ class NflverseWeeklyStatsProvider:
         constructed with an ``id_crosswalk`` -- see the module docstring's
         "``sleeper_player_id`` requires an optional crosswalk" section.
         """
-        if self._raw is None:
-            self._raw = get_player_stats_cached(
-                self._client, self._cache_path, force_refresh=self._force_refresh
+        if season not in self._raw_by_season:
+            self._raw_by_season[season] = get_player_stats_cached(
+                self._client,
+                season,
+                self._cache_dir,
+                force_refresh=self._force_refresh,
             )
 
         return normalize_player_stats(
-            self._raw, season, week, id_crosswalk=self._id_crosswalk
+            self._raw_by_season[season], season, week, id_crosswalk=self._id_crosswalk
         )

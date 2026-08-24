@@ -234,6 +234,24 @@ so a caller who wants the *breakdown* to sum back to the *recorded* score
 exactly should check :func:`reconcile_matchup_points` first, rather than
 assume it always holds.
 
+Season type mismatch between the two input frames
+------------------------------------------------------
+
+``season_matchup_df.season`` and ``player_week_df.season`` are documented,
+in their own respective modules, to carry ``season`` differently:
+``matchups.season_matchups`` treats it as an opaque label carried through
+unchanged from whatever Sleeper returned (in practice always ``str`` for a
+live league, since Sleeper's API returns league season as a JSON string),
+while ``players.player_week`` always normalizes it to ``int``. Every
+roster-week join in this module keys on ``(season, week, roster_id)``
+across both frames, so joining on the raw values would silently match
+nothing whenever the two frames disagree on type -- exactly the case for
+any real (non-hand-built) pair of inputs. Every internal join key in this
+module therefore normalizes its season component with ``str(...)`` before
+comparing; the ``season`` values in this module's *output* columns are
+unaffected (still whatever ``season_matchup_df`` carried, cast to ``int``
+at the end, per each builder's own column-dtype handling).
+
 Missing values / edge cases
 ------------------------------
 
@@ -463,7 +481,11 @@ def _roster_week_context(season_matchup_df: pd.DataFrame) -> dict[tuple, dict]:
                 else None
             )
 
-            context[(season, week, own_id)] = {
+            # season is normalized to str for the key only (not the stored
+            # value) so a roster-week matches regardless of whether the two
+            # input frames' season columns are the same type -- see the
+            # module docstring's "Season type mismatch" section.
+            context[(str(season), week, own_id)] = {
                 "season": season,
                 "week": week,
                 "is_playoff": is_playoff,
@@ -503,7 +525,8 @@ def _started_rows_by_roster_week(
         if not bool(getattr(row, "started", False)):
             continue
 
-        key = (row.season, row.week, int(row.roster_id))
+        # str(...) for the same reason as _roster_week_context's key.
+        key = (str(row.season), row.week, int(row.roster_id))
         players = grouped.setdefault(key, [])
 
         player_id = getattr(row, "sleeper_player_id", None)
@@ -718,7 +741,7 @@ def build_positional_matchup_advantage(
 
     rows: list[dict] = []
     for key, ctx in context.items():
-        opp_key = (ctx["season"], ctx["week"], ctx["opponent_roster_id"])
+        opp_key = (str(ctx["season"]), ctx["week"], ctx["opponent_roster_id"])
         own_sums = position_sums.get(key, {})
         opp_sums = position_sums.get(opp_key, {})
         if not own_sums and not opp_sums:

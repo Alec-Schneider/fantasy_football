@@ -30,10 +30,10 @@ def test_download_player_stats_returns_a_dataframe(
 ) -> None:
     with requests_mock_lib.Mocker() as m:
         m.get(
-            NflverseClient.PLAYER_STATS_URL,
+            NflverseClient.STATS_PLAYER_WEEK_URL_TEMPLATE.format(season=2025),
             content=_gzipped_fixture(nflverse_fixture_path),
         )
-        result = client.download_player_stats()
+        result = client.download_player_stats(2025)
 
     assert len(result) == 4
     assert "player_id" in result.columns
@@ -43,7 +43,25 @@ def test_download_player_stats_returns_a_dataframe(
 
 def test_download_player_stats_raises_on_http_error(client: NflverseClient) -> None:
     with requests_mock_lib.Mocker() as m:
-        m.get(NflverseClient.PLAYER_STATS_URL, status_code=500)
+        m.get(
+            NflverseClient.STATS_PLAYER_WEEK_URL_TEMPLATE.format(season=2025),
+            status_code=500,
+        )
 
         with pytest.raises(requests.exceptions.HTTPError):
-            client.download_player_stats()
+            client.download_player_stats(2025)
+
+
+def test_download_player_stats_returns_empty_frame_for_unpublished_season(
+    client: NflverseClient,
+) -> None:
+    """A season with no release asset yet (404) is "no data", not an error."""
+    with requests_mock_lib.Mocker() as m:
+        m.get(
+            NflverseClient.STATS_PLAYER_WEEK_URL_TEMPLATE.format(season=2099),
+            status_code=404,
+        )
+
+        result = client.download_player_stats(2099)
+
+    assert result.empty

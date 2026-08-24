@@ -34,7 +34,7 @@ from fantasy_analyzer.players.matchup_contribution import (
     reconcile_matchup_points,
 )
 from fantasy_analyzer.players.nflverse_cache import (
-    DEFAULT_CACHE_PATH as NFLVERSE_DEFAULT_CACHE_PATH,
+    DEFAULT_CACHE_DIR as NFLVERSE_DEFAULT_CACHE_DIR,
 )
 from fantasy_analyzer.players.nflverse_cache import (
     get_player_stats_cached,
@@ -107,7 +107,7 @@ __all__ = [
     "NflverseWeeklyStatsProvider",
     "RAW_STAT_COLUMNS",
     "normalize_player_stats",
-    "NFLVERSE_DEFAULT_CACHE_PATH",
+    "NFLVERSE_DEFAULT_CACHE_DIR",
     "load_player_stats_cache",
     "refresh_player_stats_cache",
     "get_player_stats_cached",

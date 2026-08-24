@@ -26,9 +26,17 @@ from fantasy_analyzer.players.nflverse_provider import (
 )
 from fantasy_analyzer.players.provider import validate_player_week_columns
 
+SEASON = 2025
+
 
 def _gzipped_fixture(path: Path) -> bytes:
     return gzip.compress(path.read_bytes())
+
+
+def _mock_url(m: requests_mock_lib.Mocker, season: int = SEASON, **kwargs) -> None:
+    m.get(
+        NflverseClient.STATS_PLAYER_WEEK_URL_TEMPLATE.format(season=season), **kwargs
+    )
 
 
 @pytest.fixture
@@ -221,15 +229,11 @@ def test_provider_satisfies_the_protocol_structurally() -> None:
 def test_provider_weekly_stats_returns_the_requested_week(
     tmp_path: Path, nflverse_fixture_path: Path
 ) -> None:
-    cache_path = tmp_path / "player_stats.csv"
-    provider = NflverseWeeklyStatsProvider(cache_path=cache_path)
+    provider = NflverseWeeklyStatsProvider(cache_dir=tmp_path)
 
     with requests_mock_lib.Mocker() as m:
-        m.get(
-            NflverseClient.PLAYER_STATS_URL,
-            content=_gzipped_fixture(nflverse_fixture_path),
-        )
-        result = provider.weekly_stats(season=2025, week=1)
+        _mock_url(m, content=_gzipped_fixture(nflverse_fixture_path))
+        result = provider.weekly_stats(season=SEASON, week=1)
 
     assert len(result) == 2
     validate_player_week_columns(result)
@@ -238,37 +242,45 @@ def test_provider_weekly_stats_returns_the_requested_week(
 def test_provider_downloads_once_and_reuses_in_memory_across_calls(
     tmp_path: Path, nflverse_fixture_path: Path
 ) -> None:
-    cache_path = tmp_path / "player_stats.csv"
-    provider = NflverseWeeklyStatsProvider(cache_path=cache_path)
+    provider = NflverseWeeklyStatsProvider(cache_dir=tmp_path)
 
     with requests_mock_lib.Mocker() as m:
-        m.get(
-            NflverseClient.PLAYER_STATS_URL,
-            content=_gzipped_fixture(nflverse_fixture_path),
-        )
-        provider.weekly_stats(season=2025, week=1)
-        provider.weekly_stats(season=2025, week=2)
+        _mock_url(m, content=_gzipped_fixture(nflverse_fixture_path))
+        provider.weekly_stats(season=SEASON, week=1)
+        provider.weekly_stats(season=SEASON, week=2)
 
         assert m.call_count == 1
+
+
+def test_provider_downloads_separately_per_season(
+    tmp_path: Path, nflverse_fixture_path: Path
+) -> None:
+    """Each distinct season triggers its own cache lookup/download."""
+    provider = NflverseWeeklyStatsProvider(cache_dir=tmp_path)
+
+    with requests_mock_lib.Mocker() as m:
+        _mock_url(m, season=2025, content=_gzipped_fixture(nflverse_fixture_path))
+        _mock_url(m, season=2024, content=_gzipped_fixture(nflverse_fixture_path))
+
+        provider.weekly_stats(season=2025, week=1)
+        provider.weekly_stats(season=2025, week=2)
+        provider.weekly_stats(season=2024, week=1)
+
+        assert m.call_count == 2
 
 
 def test_provider_reuses_disk_cache_across_provider_instances(
     tmp_path: Path, nflverse_fixture_path: Path
 ) -> None:
-    cache_path = tmp_path / "player_stats.csv"
-
     with requests_mock_lib.Mocker() as m:
-        m.get(
-            NflverseClient.PLAYER_STATS_URL,
-            content=_gzipped_fixture(nflverse_fixture_path),
-        )
-        NflverseWeeklyStatsProvider(cache_path=cache_path).weekly_stats(2025, 1)
+        _mock_url(m, content=_gzipped_fixture(nflverse_fixture_path))
+        NflverseWeeklyStatsProvider(cache_dir=tmp_path).weekly_stats(SEASON, 1)
         assert m.call_count == 1
 
         # A second provider instance should read the now-populated disk
         # cache rather than hitting the network again.
-        result = NflverseWeeklyStatsProvider(cache_path=cache_path).weekly_stats(
-            2025, 2
+        result = NflverseWeeklyStatsProvider(cache_dir=tmp_path).weekly_stats(
+            SEASON, 2
         )
         assert m.call_count == 1
 
@@ -278,18 +290,15 @@ def test_provider_reuses_disk_cache_across_provider_instances(
 def test_provider_force_refresh_bypasses_the_disk_cache(
     tmp_path: Path, nflverse_fixture_path: Path
 ) -> None:
-    cache_path = tmp_path / "player_stats.csv"
+    cache_path = tmp_path / f"player_stats_{SEASON}.csv"
     cache_path.write_text("player_id,season,week\n00-9999,1999,1\n")
 
     with requests_mock_lib.Mocker() as m:
-        m.get(
-            NflverseClient.PLAYER_STATS_URL,
-            content=_gzipped_fixture(nflverse_fixture_path),
-        )
+        _mock_url(m, content=_gzipped_fixture(nflverse_fixture_path))
         provider = NflverseWeeklyStatsProvider(
-            cache_path=cache_path, force_refresh=True
+            cache_dir=tmp_path, force_refresh=True
         )
-        result = provider.weekly_stats(season=2025, week=1)
+        result = provider.weekly_stats(season=SEASON, week=1)
 
         assert m.called
 
@@ -303,18 +312,14 @@ def test_provider_populates_sleeper_player_id_when_constructed_with_crosswalk(
     for a player present in both the nflverse fixture and the crosswalk,
     while leaving it None for one that isn't (mirroring the "Some Rookie"
     edge case)."""
-    cache_path = tmp_path / "player_stats.csv"
     provider = NflverseWeeklyStatsProvider(
-        cache_path=cache_path, id_crosswalk=id_crosswalk
+        cache_dir=tmp_path, id_crosswalk=id_crosswalk
     )
 
     with requests_mock_lib.Mocker() as m:
-        m.get(
-            NflverseClient.PLAYER_STATS_URL,
-            content=_gzipped_fixture(nflverse_fixture_path),
-        )
-        week_one = provider.weekly_stats(season=2025, week=1)
-        week_two = provider.weekly_stats(season=2025, week=2)
+        _mock_url(m, content=_gzipped_fixture(nflverse_fixture_path))
+        week_one = provider.weekly_stats(season=SEASON, week=1)
+        week_two = provider.weekly_stats(season=SEASON, week=2)
 
     allen = week_one[week_one["player_name"] == "Josh Allen"].iloc[0]
     assert allen["sleeper_player_id"] == "1000"
@@ -326,15 +331,25 @@ def test_provider_populates_sleeper_player_id_when_constructed_with_crosswalk(
 def test_provider_weekly_stats_empty_for_a_week_with_no_data(
     tmp_path: Path, nflverse_fixture_path: Path
 ) -> None:
-    cache_path = tmp_path / "player_stats.csv"
-    provider = NflverseWeeklyStatsProvider(cache_path=cache_path)
+    provider = NflverseWeeklyStatsProvider(cache_dir=tmp_path)
 
     with requests_mock_lib.Mocker() as m:
-        m.get(
-            NflverseClient.PLAYER_STATS_URL,
-            content=_gzipped_fixture(nflverse_fixture_path),
-        )
+        _mock_url(m, season=2030, content=_gzipped_fixture(nflverse_fixture_path))
         result = provider.weekly_stats(season=2030, week=1)
+
+    assert result.empty
+    validate_player_week_columns(result)
+
+
+def test_provider_weekly_stats_empty_for_an_unpublished_season(
+    tmp_path: Path,
+) -> None:
+    """A season nflverse hasn't released yet (404) yields empty, not an error."""
+    provider = NflverseWeeklyStatsProvider(cache_dir=tmp_path)
+
+    with requests_mock_lib.Mocker() as m:
+        _mock_url(m, season=2099, status_code=404)
+        result = provider.weekly_stats(season=2099, week=1)
 
     assert result.empty
     validate_player_week_columns(result)

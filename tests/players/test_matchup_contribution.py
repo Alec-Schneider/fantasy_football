@@ -293,6 +293,37 @@ class TestPlayerContributions:
         )
         assert not (df["roster_id"] == 4).any()
 
+    def test_matches_across_a_season_type_mismatch(self) -> None:
+        """A roster-week must still join when the two input frames' season
+        columns disagree on type -- exactly the real-world case, since
+        ``season_matchup_df.season`` is a str for a live league (carried
+        through opaque, per ``matchups.season_matchups``) while
+        ``player_week_df.season`` is always int (per ``player_week.py``).
+        See this module's "Season type mismatch" docstring section."""
+        matchups = [
+            _matchup_row(
+                roster_1_id=1,
+                roster_2_id=2,
+                points_1=45.0,
+                points_2=38.0,
+                winner=1,
+                loser=2,
+                season="2025",
+            )
+        ]
+        players = [
+            _player_row(2025, 1, 1, "QB1", 20.0, "QB", True, fantasy_team="Alpha"),
+            _player_row(2025, 1, 2, "QB2", 18.0, "QB", True, fantasy_team="Beta"),
+        ]
+        df = build_matchup_player_contributions(
+            _matchup_df(matchups), _player_df(players)
+        )
+
+        assert len(df) == 2
+        qb1 = _contribution_row(df, 1, "QB1")
+        assert qb1["season"] == 2025
+        assert qb1["team_points"] == pytest.approx(45.0)
+
     def test_tied_fantasy_points_share_rank(self) -> None:
         """Two started players tied on points share ``contribution_rank``."""
         matchups = [
@@ -467,6 +498,35 @@ class TestPlayerContributions:
 
 
 class TestPositionalAdvantage:
+    def test_matches_across_a_season_type_mismatch(self) -> None:
+        """Same real-world scenario as
+        ``TestPlayerContributions.test_matches_across_a_season_type_mismatch``,
+        exercised here since ``build_positional_matchup_advantage`` builds
+        its own opponent-lookup key (``opp_key``) from ``ctx["season"]``."""
+        matchups = [
+            _matchup_row(
+                roster_1_id=1,
+                roster_2_id=2,
+                points_1=20.0,
+                points_2=18.0,
+                winner=1,
+                loser=2,
+                season="2025",
+            )
+        ]
+        players = [
+            _player_row(2025, 1, 1, "QB1", 20.0, "QB", True, fantasy_team="Alpha"),
+            _player_row(2025, 1, 2, "QB2", 18.0, "QB", True, fantasy_team="Beta"),
+        ]
+        df = build_positional_matchup_advantage(
+            _matchup_df(matchups), _player_df(players)
+        )
+
+        qb = _advantage_row(df, 1, "QB")
+        assert qb["own_points"] == pytest.approx(20.0)
+        assert qb["opponent_points"] == pytest.approx(18.0)
+        assert qb["positional_advantage"] == pytest.approx(2.0)
+
     def test_toy_week_one_advantages_sum_to_margin(self) -> None:
         df = build_positional_matchup_advantage(
             _matchup_df(_toy_matchups()), _player_df(_toy_players())
