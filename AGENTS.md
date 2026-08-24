@@ -443,26 +443,11 @@ feat: split head-to-head results by season phase
 
 - **FFA-060** — Define Player Data Provider Interface — DONE (`098cff1`) — see PROGRESS.md
 - **FFA-061** — Add nflverse Weekly Stat Provider — DONE (`635eff8`) — see PROGRESS.md
-
-## FFA-062 — Build Sleeper to nflverse Player ID Crosswalk
-
-**Status:** REVIEW  
-**Owner:** Data Engineer  
-**Depends on:** FFA-061
-
-**Suggested commit:**
-
-```text
-feat: map Sleeper player ids to nflverse ids
-```
-
-Prefer explicit ID mappings over fuzzy name matching.
-
----
+- **FFA-062** — Build Sleeper to nflverse Player ID Crosswalk — DONE (`85058c4`) — see PROGRESS.md
 
 ## FFA-063 — Build League-Specific Fantasy Scoring Engine
 
-**Status:** BACKLOG  
+**Status:** READY  
 **Owner:** Data Scientist  
 **Depends on:** FFA-011, FFA-061
 
@@ -809,22 +794,24 @@ Part 7 should begin only after league-specific scoring and matchup structures ar
 
 ## READY
 
-None. FFA-062's implementation is complete and awaiting review (see REVIEW
-below); no other ticket's dependencies have cleared yet.
+### FFA-063 — Build League-Specific Fantasy Scoring Engine
+
+Its dependencies, FFA-011 and FFA-061, are both DONE, and FFA-062 (the
+ID crosswalk it will need to fully populate player identity) has also
+shipped. This is the next ticket to implement.
 
 ---
 
 ## BACKLOG
 
 ```text
-FFA-044, FFA-063 through FFA-072
+FFA-044, FFA-064 through FFA-072
 ```
 
 FFA-044 is unblocked on paper (FFA-022 and FFA-040 are both DONE) but is
 intentionally left in BACKLOG rather than READY here since it is not the
 next ticket in the recommended sequence; an agent may still pick it up if
-explicitly assigned. FFA-063 through FFA-072 remain blocked behind FFA-062
-until it clears REVIEW and is marked DONE.
+explicitly assigned. FFA-064 through FFA-072 remain blocked behind FFA-063.
 
 Tickets become READY when their dependencies are complete and reviewed.
 
@@ -838,23 +825,13 @@ None.
 
 ## REVIEW
 
-### FFA-062 — Build Sleeper to nflverse Player ID Crosswalk
-
-Implementation complete: `src/fantasy_analyzer/players/crosswalk.py` adds
-`build_id_crosswalk` (extracts `sleeper_player_id <-> gsis_id` pairs
-directly from Sleeper's own catalog, which already carries a native
-`gsis_id` field -- no fuzzy matching) plus `gsis_to_sleeper_lookup` /
-`sleeper_to_gsis_lookup`. `NflverseWeeklyStatsProvider` and
-`normalize_player_stats` now accept an optional `id_crosswalk` to populate
-`sleeper_player_id`, defaulting to `None` (unchanged prior behavior). 15
-new tests; full suite 447 passed; `ruff check` clean on all touched files.
-Not yet committed. Awaiting user review before moving to DONE.
+None.
 
 ---
 
 ## DONE
 
-FFA-001 through FFA-057, FFA-060, FFA-061 — see PROGRESS.md.
+FFA-001 through FFA-057, FFA-060, FFA-061, FFA-062 — see PROGRESS.md.
 
 ---
 
