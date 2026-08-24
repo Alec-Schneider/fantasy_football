@@ -452,7 +452,7 @@ feat: split head-to-head results by season phase
 
 ## FFA-068 — Replacement-Level Player Value
 
-**Status:** READY  
+**Status:** IN PROGRESS  
 **Owner:** Data Scientist  
 **Depends on:** FFA-065
 
@@ -689,9 +689,7 @@ Part 7 should begin only after league-specific scoring and matchup structures ar
 
 ## READY
 
-### FFA-068 — Replacement-Level Player Value
-
-Its dependency, FFA-065, is DONE. This is the next ticket to implement.
+None.
 
 ---
 
@@ -715,7 +713,10 @@ Tickets become READY when their dependencies are complete and reviewed.
 
 ## IN PROGRESS
 
-None.
+### FFA-068 — Replacement-Level Player Value
+
+Being implemented now; will flip to REVIEW once the implementing agent
+reports back.
 
 ---
 
