@@ -15,6 +15,16 @@ from fantasy_analyzer.matchups.pairing import (
     pair_season_matchups,
     pair_week_matchups,
 )
+from fantasy_analyzer.matchups.playoffs import (
+    FINAL_PLACEMENT_COLUMNS,
+    LOSERS_BRACKET,
+    PLAYOFF_BRACKET_COLUMNS,
+    WINNERS_BRACKET,
+    build_bracket_df,
+    build_final_placements,
+    build_playoff_brackets,
+    load_playoff_brackets,
+)
 from fantasy_analyzer.matchups.reconciliation import (
     DERIVED_TOTALS_COLUMNS,
     POINTS_TOLERANCE,
@@ -40,6 +50,14 @@ __all__ = [
     "derive_season_outcomes",
     "SEASON_MATCHUP_COLUMNS",
     "build_season_matchup_df",
+    "FINAL_PLACEMENT_COLUMNS",
+    "LOSERS_BRACKET",
+    "PLAYOFF_BRACKET_COLUMNS",
+    "WINNERS_BRACKET",
+    "build_bracket_df",
+    "build_final_placements",
+    "build_playoff_brackets",
+    "load_playoff_brackets",
     "DERIVED_TOTALS_COLUMNS",
     "RECONCILIATION_COLUMNS",
     "WIN_LOSS_TIE_TOLERANCE",
