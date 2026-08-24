@@ -12,6 +12,15 @@ from fantasy_analyzer.players.lineup_efficiency import (
     build_lineup_efficiency_metrics,
     build_roster_efficiency_metrics,
 )
+from fantasy_analyzer.players.matchup_contribution import (
+    MATCHUP_POINTS_TOLERANCE,
+    PLAYER_CONTRIBUTION_COLUMNS,
+    POSITIONAL_ADVANTAGE_COLUMNS,
+    RECONCILE_COLUMNS,
+    build_matchup_player_contributions,
+    build_positional_matchup_advantage,
+    reconcile_matchup_points,
+)
 from fantasy_analyzer.players.nflverse_cache import (
     DEFAULT_CACHE_PATH as NFLVERSE_DEFAULT_CACHE_PATH,
 )
@@ -120,4 +129,11 @@ __all__ = [
     "build_roster_efficiency_metrics",
     "PlayerAnalytics",
     "build_player_analytics",
+    "PLAYER_CONTRIBUTION_COLUMNS",
+    "POSITIONAL_ADVANTAGE_COLUMNS",
+    "RECONCILE_COLUMNS",
+    "MATCHUP_POINTS_TOLERANCE",
+    "build_matchup_player_contributions",
+    "build_positional_matchup_advantage",
+    "reconcile_matchup_points",
 ]
