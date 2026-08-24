@@ -444,30 +444,11 @@ feat: split head-to-head results by season phase
 - **FFA-060** — Define Player Data Provider Interface — DONE (`098cff1`) — see PROGRESS.md
 - **FFA-061** — Add nflverse Weekly Stat Provider — DONE (`635eff8`) — see PROGRESS.md
 - **FFA-062** — Build Sleeper to nflverse Player ID Crosswalk — DONE (`85058c4`) — see PROGRESS.md
-
-## FFA-063 — Build League-Specific Fantasy Scoring Engine
-
-**Status:** READY  
-**Owner:** Data Scientist  
-**Depends on:** FFA-011, FFA-061
-
-**Suggested commit:**
-
-```text
-feat: calculate fantasy points from league scoring rules
-```
-
-### Acceptance Criteria
-
-- scoring is derived from the actual league configuration
-- representative scoring categories are tested
-- unsupported scoring fields are surfaced clearly
-
----
+- **FFA-063** — Build League-Specific Fantasy Scoring Engine — DONE (`<commit-hash>`) — see PROGRESS.md
 
 ## FFA-064 — Build Player-Week Fact Table
 
-**Status:** BACKLOG  
+**Status:** READY  
 **Owner:** Data Engineer  
 **Depends on:** FFA-062, FFA-063
 
@@ -794,24 +775,23 @@ Part 7 should begin only after league-specific scoring and matchup structures ar
 
 ## READY
 
-### FFA-063 — Build League-Specific Fantasy Scoring Engine
+### FFA-064 — Build Player-Week Fact Table
 
-Its dependencies, FFA-011 and FFA-061, are both DONE, and FFA-062 (the
-ID crosswalk it will need to fully populate player identity) has also
-shipped. This is the next ticket to implement.
+Its dependencies, FFA-062 and FFA-063, are both DONE. This is the next
+ticket to implement.
 
 ---
 
 ## BACKLOG
 
 ```text
-FFA-044, FFA-064 through FFA-072
+FFA-044, FFA-065 through FFA-072
 ```
 
 FFA-044 is unblocked on paper (FFA-022 and FFA-040 are both DONE) but is
 intentionally left in BACKLOG rather than READY here since it is not the
 next ticket in the recommended sequence; an agent may still pick it up if
-explicitly assigned. FFA-064 through FFA-072 remain blocked behind FFA-063.
+explicitly assigned. FFA-065 through FFA-072 remain blocked behind FFA-064.
 
 Tickets become READY when their dependencies are complete and reviewed.
 
@@ -831,7 +811,7 @@ None.
 
 ## DONE
 
-FFA-001 through FFA-057, FFA-060, FFA-061, FFA-062 — see PROGRESS.md.
+FFA-001 through FFA-057, FFA-060, FFA-061, FFA-062, FFA-063 — see PROGRESS.md.
 
 ---
 

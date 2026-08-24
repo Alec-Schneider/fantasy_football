@@ -25,6 +25,11 @@ from fantasy_analyzer.players.provider import (
     PlayerStatsProvider,
     validate_player_week_columns,
 )
+from fantasy_analyzer.players.scoring import (
+    SCORING_KEY_TO_STAT_COLUMNS,
+    ScoringResult,
+    calculate_fantasy_points,
+)
 
 __all__ = [
     "PLAYER_WEEK_IDENTITY_COLUMNS",
@@ -42,4 +47,7 @@ __all__ = [
     "build_id_crosswalk",
     "gsis_to_sleeper_lookup",
     "sleeper_to_gsis_lookup",
+    "SCORING_KEY_TO_STAT_COLUMNS",
+    "ScoringResult",
+    "calculate_fantasy_points",
 ]
