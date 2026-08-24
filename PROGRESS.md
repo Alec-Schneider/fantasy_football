@@ -4,7 +4,7 @@ _Last updated by project-tracker: 2026-08-24_
 
 ## Current state
 
-Epics 1 through 6 (FFA-001 through FFA-057) are fully shipped and verified against actual code/tests, except **FFA-044** ("Split Regular Season and Playoff H2H"), which remains BACKLOG — the codebase explicitly defers it (see `src/fantasy_analyzer/analytics/head_to_head.py`). Epic 7 has now shipped through FFA-067: provider interface (FFA-060), nflverse provider (FFA-061), ID crosswalk (FFA-062), scoring engine (FFA-063), player-week fact table (FFA-064), performance metrics (FFA-065), position strength (FFA-066), and optimal lineup / roster efficiency (FFA-067). **FFA-068** ("Replacement-Level Player Value") is READY since its only dependency, FFA-065, is DONE. FFA-069 and FFA-070 are unblocked on paper but held in BACKLOG per the sequencing convention; FFA-071 and FFA-072 remain blocked. Two tickets, **FFA-007** and **FFA-014**, have no commit whose message matches their suggested one, but their acceptance criteria are genuinely satisfied — the work was absorbed into the commits for the tickets they support (fixtures landed alongside each endpoint's own commit; normalized-data tests landed alongside FFA-010/011/012/013's own commits) rather than shipped as a separate commit. This run also backfilled the archive entries for FFA-061 through FFA-066, which earlier chore runs compacted out of AGENTS.md without archiving (their original ticket text was recovered verbatim from AGENTS.md git history).
+Epics 1 through 6 (FFA-001 through FFA-057) are fully shipped and verified against actual code/tests, except **FFA-044** ("Split Regular Season and Playoff H2H"), which remains BACKLOG — the codebase explicitly defers it (see `src/fantasy_analyzer/analytics/head_to_head.py`). Epic 7 has now shipped through FFA-068: provider interface (FFA-060), nflverse provider (FFA-061), ID crosswalk (FFA-062), scoring engine (FFA-063), player-week fact table (FFA-064), performance metrics (FFA-065), position strength (FFA-066), optimal lineup / roster efficiency (FFA-067), and replacement-level player value (FFA-068). **FFA-071** ("Player Analytics API") is READY: every DataFrame it expects (`player_weekly_df`, `player_season_df`, `position_summary_df`, `roster_efficiency_df`, `player_value_df`) comes from FFA-065 through FFA-068, all DONE; the FFA-069/070 frames can be added when those tickets land. FFA-069 and FFA-070 are unblocked on paper but held in BACKLOG per the sequencing convention; FFA-072 remains blocked behind FFA-071. Two tickets, **FFA-007** and **FFA-014**, have no commit whose message matches their suggested one, but their acceptance criteria are genuinely satisfied — the work was absorbed into the commits for the tickets they support (fixtures landed alongside each endpoint's own commit; normalized-data tests landed alongside FFA-010/011/012/013's own commits) rather than shipped as a separate commit. This run also backfilled the archive entries for FFA-061 through FFA-066, which earlier chore runs compacted out of AGENTS.md without archiving (their original ticket text was recovered verbatim from AGENTS.md git history).
 
 ---
 
@@ -772,3 +772,19 @@ The optimizer must respect league roster-position rules.
 - points left on bench
 - lineup efficiency percentage
 - frequency of suboptimal start/sit decisions
+
+---
+
+### FFA-068 — Replacement-Level Player Value
+**Commit:** `eff25d7` `feat: add replacement-level player value` (hardened by `b18c5e0`)
+**Owner:** Data Scientist
+**Depends on:** FFA-065
+
+**Verification note:** Implemented in `src/fantasy_analyzer/players/player_value.py` (`build_player_value_metrics` / `build_position_scarcity_metrics`) with 28 tests in `tests/players/test_player_value.py`; full suite passes (576 tests) and `ruff check src tests` is clean. Replacement level at a position is the `points_per_game` of the player at the league's starter cutoff per `(season, position)`: cutoff = `num_teams` × starting slots eligible for the position, flex slots counted at every eligible position (via FFA-067's `START_SLOT_ELIGIBILITY` plus Sleeper's IDP slot labels), clamped to the worst rostered player when the field is smaller or the league has no starting slots there — the clamp is a documented heuristic, not a bound (VORP can be overstated when a better free agent exists). Outputs: points above positional average (rate and total), points above replacement (rate and season VORP), `value_rank` (standard competition "1224" across positions within the season, ties judged on the VORP rounded to six decimals), and per-position scarcity (`position_starters`, `replacement_rank`, `best_ppg`, `replacement_ppg`, `ppg_gap_to_replacement`, `scarcity_ratio`). The post-review hardening commit `b18c5e0` fixed findings verified by execution: `num_teams=None`/float coercion, IDP slot eligibility, duplicate `(season, sleeper_player_id)` rows and missing required columns now raise `ValueError`, fractional `games_played` preserved verbatim, empty-string identity treated as missing, empty-frame dtypes matching the documented contract, `None` labels preserved, and float-noise tie ranking.
+
+**Possible outputs**
+
+- points above positional average
+- points above replacement
+- positional scarcity
+- league-relative player value

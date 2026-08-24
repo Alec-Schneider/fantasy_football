@@ -449,29 +449,7 @@ feat: split head-to-head results by season phase
 - **FFA-065** — Player Performance Metrics — DONE (`60e6c9d`) — see PROGRESS.md
 - **FFA-066** — Position Strength Analytics — DONE (`0774b17`) — see PROGRESS.md
 - **FFA-067** — Optimal Lineup and Roster Efficiency — DONE (`e619eb7`) — see PROGRESS.md
-
-## FFA-068 — Replacement-Level Player Value
-
-**Status:** IN PROGRESS  
-**Owner:** Data Scientist  
-**Depends on:** FFA-065
-
-**Suggested commit:**
-
-```text
-feat: add replacement-level player value
-```
-
-Possible outputs:
-
-- points above positional average
-- points above replacement
-- positional scarcity
-- league-relative player value
-
-Replacement-level methodology must be explicitly documented.
-
----
+- **FFA-068** — Replacement-Level Player Value — DONE (`eff25d7`, hardened `b18c5e0`) — see PROGRESS.md
 
 ## FFA-069 — Matchup Player Contribution Analysis
 
@@ -519,7 +497,7 @@ Analyze:
 
 ## FFA-071 — Player Analytics API
 
-**Status:** BACKLOG  
+**Status:** READY  
 **Owner:** Software Engineer  
 **Depends on:** FFA-065 through FFA-070
 
@@ -689,14 +667,20 @@ Part 7 should begin only after league-specific scoring and matchup structures ar
 
 ## READY
 
-None.
+### FFA-071 — Player Analytics API
+
+Its dependency, FFA-068, is DONE. Every DataFrame the ticket expects
+(`player_weekly_df`, `player_season_df`, `position_summary_df`,
+`roster_efficiency_df`, `player_value_df`) is produced by FFA-065 through
+FFA-068, all DONE; the FFA-069 and FFA-070 frames can be added to the API
+when those tickets land. This is the next ticket to implement.
 
 ---
 
 ## BACKLOG
 
 ```text
-FFA-044, FFA-069 through FFA-072
+FFA-044, FFA-069, FFA-070, FFA-072
 ```
 
 FFA-044 is unblocked on paper (FFA-022 and FFA-040 are both DONE) but is
@@ -704,8 +688,7 @@ intentionally left in BACKLOG rather than READY here since it is not the
 next ticket in the recommended sequence; an agent may still pick it up if
 explicitly assigned. FFA-069 (deps FFA-033, FFA-064) and FFA-070 (dep
 FFA-067) are likewise unblocked on paper and stay in BACKLOG for the same
-reason; FFA-071 and FFA-072 remain blocked behind FFA-068 and FFA-071
-respectively.
+reason; FFA-072 remains blocked behind FFA-071.
 
 Tickets become READY when their dependencies are complete and reviewed.
 
@@ -713,10 +696,7 @@ Tickets become READY when their dependencies are complete and reviewed.
 
 ## IN PROGRESS
 
-### FFA-068 — Replacement-Level Player Value
-
-Being implemented now; will flip to REVIEW once the implementing agent
-reports back.
+None.
 
 ---
 
@@ -728,7 +708,7 @@ None.
 
 ## DONE
 
-FFA-001 through FFA-057, FFA-060 through FFA-067 — see PROGRESS.md.
+FFA-001 through FFA-057, FFA-060 through FFA-068 — see PROGRESS.md.
 
 ---
 
