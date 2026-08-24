@@ -20,6 +20,10 @@ from fantasy_analyzer.analytics.head_to_head_matrix import (
     build_head_to_head_matrix,
     format_head_to_head_matrix,
 )
+from fantasy_analyzer.analytics.league_analytics import (
+    LeagueAnalytics,
+    build_league_analytics,
+)
 from fantasy_analyzer.analytics.matchup_history import (
     HeadToHeadHistory,
     MatchupHistory,
@@ -59,6 +63,7 @@ from fantasy_analyzer.analytics.weekly_scores import (
 __all__ = [
     "build_all_play_standings",
     "build_consistency_metrics",
+    "build_league_analytics",
     "build_league_summary",
     "build_power_rankings",
     "build_scoring_summary",
@@ -80,6 +85,7 @@ __all__ = [
     "HEAD_TO_HEAD_MATRIX_NO_MEETING",
     "HeadToHeadCell",
     "HeadToHeadHistory",
+    "LeagueAnalytics",
     "LeagueSummary",
     "LeagueSummaryView",
     "MatchupHistory",
