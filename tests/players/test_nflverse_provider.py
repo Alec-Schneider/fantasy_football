@@ -17,6 +17,7 @@ import pytest
 import requests_mock as requests_mock_lib
 
 from fantasy_analyzer.players import PLAYER_WEEK_IDENTITY_COLUMNS, PlayerStatsProvider
+from fantasy_analyzer.players.crosswalk import build_id_crosswalk
 from fantasy_analyzer.players.nflverse_client import NflverseClient
 from fantasy_analyzer.players.nflverse_provider import (
     RAW_STAT_COLUMNS,
@@ -33,6 +34,19 @@ def _gzipped_fixture(path: Path) -> bytes:
 @pytest.fixture
 def raw_stats(nflverse_fixture_path: Path) -> pd.DataFrame:
     return pd.read_csv(nflverse_fixture_path)
+
+
+@pytest.fixture
+def id_crosswalk(load_sleeper_fixture) -> pd.DataFrame:
+    """A crosswalk built from the sanitized Sleeper fixture catalog.
+
+    The fixture's "1000" maps to gsis_id "00-0034857", which is Josh Allen
+    in ``player_stats.csv`` -- the only crosswalk match against that
+    fixture. Every other nflverse fixture row (e.g. Ja'Marr Chase's
+    "00-0036900") has no corresponding entry, exercising the "unmatched"
+    case.
+    """
+    return build_id_crosswalk(load_sleeper_fixture("players.json"))
 
 
 # -------------------------
@@ -105,6 +119,40 @@ def test_normalize_handles_a_row_missing_gsis_id_and_team(
     assert pd.isna(rookie["gsis_id"])
     assert pd.isna(rookie["nfl_team"])
     assert pd.isna(rookie["sleeper_player_id"])
+
+
+def test_normalize_populates_sleeper_player_id_when_crosswalk_matches(
+    raw_stats: pd.DataFrame, id_crosswalk: pd.DataFrame
+) -> None:
+    """FFA-062: a matching gsis_id populates sleeper_player_id."""
+    result = normalize_player_stats(
+        raw_stats, season=2025, week=1, id_crosswalk=id_crosswalk
+    )
+    allen = result[result["player_name"] == "Josh Allen"].iloc[0]
+
+    assert allen["sleeper_player_id"] == "1000"
+
+
+def test_normalize_leaves_sleeper_player_id_none_when_crosswalk_has_no_match(
+    raw_stats: pd.DataFrame, id_crosswalk: pd.DataFrame
+) -> None:
+    """A gsis_id present in nflverse data but absent from the crosswalk stays None."""
+    result = normalize_player_stats(
+        raw_stats, season=2025, week=2, id_crosswalk=id_crosswalk
+    )
+    chase = result[result["player_name"] == "Ja'Marr Chase"].iloc[0]
+
+    assert chase["gsis_id"] == "00-0036900"
+    assert pd.isna(chase["sleeper_player_id"])
+
+
+def test_normalize_without_crosswalk_still_leaves_sleeper_player_id_none(
+    raw_stats: pd.DataFrame,
+) -> None:
+    """Omitting id_crosswalk preserves the original, pre-FFA-062 behavior."""
+    result = normalize_player_stats(raw_stats, season=2025, week=1)
+
+    assert result["sleeper_player_id"].isna().all()
 
 
 def test_normalize_passes_through_documented_raw_stat_columns(
@@ -246,6 +294,33 @@ def test_provider_force_refresh_bypasses_the_disk_cache(
         assert m.called
 
     assert len(result) == 2
+
+
+def test_provider_populates_sleeper_player_id_when_constructed_with_crosswalk(
+    tmp_path: Path, nflverse_fixture_path: Path, id_crosswalk: pd.DataFrame
+) -> None:
+    """FFA-062 end-to-end: crosswalk-aware provider populates sleeper_player_id
+    for a player present in both the nflverse fixture and the crosswalk,
+    while leaving it None for one that isn't (mirroring the "Some Rookie"
+    edge case)."""
+    cache_path = tmp_path / "player_stats.csv"
+    provider = NflverseWeeklyStatsProvider(
+        cache_path=cache_path, id_crosswalk=id_crosswalk
+    )
+
+    with requests_mock_lib.Mocker() as m:
+        m.get(
+            NflverseClient.PLAYER_STATS_URL,
+            content=_gzipped_fixture(nflverse_fixture_path),
+        )
+        week_one = provider.weekly_stats(season=2025, week=1)
+        week_two = provider.weekly_stats(season=2025, week=2)
+
+    allen = week_one[week_one["player_name"] == "Josh Allen"].iloc[0]
+    assert allen["sleeper_player_id"] == "1000"
+
+    chase = week_two[week_two["player_name"] == "Ja'Marr Chase"].iloc[0]
+    assert pd.isna(chase["sleeper_player_id"])
 
 
 def test_provider_weekly_stats_empty_for_a_week_with_no_data(

@@ -1,5 +1,11 @@
 """Player providers, nflverse integration, fantasy scoring, and roster efficiency."""
 
+from fantasy_analyzer.players.crosswalk import (
+    CROSSWALK_COLUMNS,
+    build_id_crosswalk,
+    gsis_to_sleeper_lookup,
+    sleeper_to_gsis_lookup,
+)
 from fantasy_analyzer.players.nflverse_cache import (
     DEFAULT_CACHE_PATH as NFLVERSE_DEFAULT_CACHE_PATH,
 )
@@ -32,4 +38,8 @@ __all__ = [
     "load_player_stats_cache",
     "refresh_player_stats_cache",
     "get_player_stats_cached",
+    "CROSSWALK_COLUMNS",
+    "build_id_crosswalk",
+    "gsis_to_sleeper_lookup",
+    "sleeper_to_gsis_lookup",
 ]

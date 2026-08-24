@@ -31,14 +31,25 @@ Identity column   nflverse source column
 ``nfl_team``      ``recent_team``
 ================  =====================================================
 
-``sleeper_player_id`` is always ``None``
------------------------------------------
+``sleeper_player_id`` requires an optional crosswalk
+-------------------------------------------------------
 
-nflverse has no notion of a Sleeper player id; mapping nflverse's
-``gsis_id`` back to Sleeper's ``player_id`` is FFA-062's job (the
-Sleeper<->nflverse ID crosswalk), out of scope for this ticket. Every row
-this provider returns leaves ``sleeper_player_id`` as ``None`` -- exactly
-the convention documented in ``provider``'s module docstring.
+nflverse has no notion of a Sleeper player id. By default (no crosswalk
+supplied), every row this provider returns leaves ``sleeper_player_id`` as
+``None`` -- exactly the convention documented in ``provider``'s module
+docstring.
+
+FFA-062 (``fantasy_analyzer.players.crosswalk``) builds a
+``gsis_id -> sleeper_player_id`` mapping from Sleeper's own player catalog
+(which carries a native ``gsis_id`` field). Both :func:`normalize_player_stats`
+and :class:`NflverseWeeklyStatsProvider` accept an optional ``id_crosswalk``
+DataFrame (see :func:`fantasy_analyzer.players.crosswalk.build_id_crosswalk`)
+-- when supplied, ``sleeper_player_id`` is populated for every row whose
+``gsis_id`` has a match in the crosswalk, and left ``None`` for rows with no
+match (an unrecognized ``gsis_id``, or a row with no ``gsis_id`` at all,
+e.g. the "Some Rookie" fixture case). Passing no crosswalk (the default)
+preserves the original, always-``None`` behavior for callers who have not
+yet wired one up.
 
 Additional stat columns
 ------------------------
@@ -70,6 +81,7 @@ from typing import Optional, Union
 
 import pandas as pd
 
+from fantasy_analyzer.players.crosswalk import gsis_to_sleeper_lookup
 from fantasy_analyzer.players.nflverse_cache import (
     DEFAULT_CACHE_PATH,
     get_player_stats_cached,
@@ -111,7 +123,12 @@ RAW_STAT_COLUMNS = [
 ]
 
 
-def normalize_player_stats(raw: pd.DataFrame, season: int, week: int) -> pd.DataFrame:
+def normalize_player_stats(
+    raw: pd.DataFrame,
+    season: int,
+    week: int,
+    id_crosswalk: Optional[pd.DataFrame] = None,
+) -> pd.DataFrame:
     """Filter and reshape nflverse's raw stats table to one canonical week.
 
     Args:
@@ -121,6 +138,14 @@ def normalize_player_stats(raw: pd.DataFrame, season: int, week: int) -> pd.Data
             season/week nflverse has published.
         season: The NFL season to filter to.
         week: The NFL week number to filter to.
+        id_crosswalk: An optional Sleeper<->nflverse ID crosswalk, as
+            returned by
+            :func:`fantasy_analyzer.players.crosswalk.build_id_crosswalk`.
+            When supplied, ``sleeper_player_id`` is populated for rows whose
+            ``gsis_id`` matches a crosswalk entry, and left ``None``
+            otherwise. Defaults to ``None``, which preserves the original
+            behavior of leaving ``sleeper_player_id`` always ``None`` -- see
+            the module docstring.
 
     Returns:
         A DataFrame whose columns begin with
@@ -139,13 +164,18 @@ def normalize_player_stats(raw: pd.DataFrame, season: int, week: int) -> pd.Data
     result = pd.DataFrame(index=matched.index)
     result["season"] = season
     result["week"] = week
-    # No Sleeper<->nflverse crosswalk yet -- see the module docstring.
+    # Populated below (after gsis_id is assigned) only if id_crosswalk is
+    # supplied -- otherwise this stays None, per the module docstring.
     result["sleeper_player_id"] = None
 
     for identity_column, source_column in _IDENTITY_SOURCE_COLUMNS.items():
         result[identity_column] = (
             matched[source_column] if source_column in matched.columns else None
         )
+
+    if id_crosswalk is not None and not id_crosswalk.empty:
+        lookup = gsis_to_sleeper_lookup(id_crosswalk)
+        result["sleeper_player_id"] = result["gsis_id"].map(lookup)
 
     result = result[PLAYER_WEEK_IDENTITY_COLUMNS]
 
@@ -175,10 +205,12 @@ class NflverseWeeklyStatsProvider:
         client: Optional[NflverseClient] = None,
         cache_path: Union[str, Path] = DEFAULT_CACHE_PATH,
         force_refresh: bool = False,
+        id_crosswalk: Optional[pd.DataFrame] = None,
     ) -> None:
         self._client = client or NflverseClient()
         self._cache_path = cache_path
         self._force_refresh = force_refresh
+        self._id_crosswalk = id_crosswalk
         self._raw: Optional[pd.DataFrame] = None
 
     def weekly_stats(self, season: int, week: int) -> pd.DataFrame:
@@ -187,10 +219,15 @@ class NflverseWeeklyStatsProvider:
         See ``PlayerStatsProvider.weekly_stats`` for the full return-shape
         contract (identity-column prefix, empty frame for no data, etc.),
         and this module's docstring for nflverse-specific column mapping.
+        ``sleeper_player_id`` is populated only if this provider was
+        constructed with an ``id_crosswalk`` -- see the module docstring's
+        "``sleeper_player_id`` requires an optional crosswalk" section.
         """
         if self._raw is None:
             self._raw = get_player_stats_cached(
                 self._client, self._cache_path, force_refresh=self._force_refresh
             )
 
-        return normalize_player_stats(self._raw, season, week)
+        return normalize_player_stats(
+            self._raw, season, week, id_crosswalk=self._id_crosswalk
+        )
