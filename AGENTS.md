@@ -450,6 +450,7 @@ feat: split head-to-head results by season phase
 - **FFA-066** — Position Strength Analytics — DONE (`0774b17`) — see PROGRESS.md
 - **FFA-067** — Optimal Lineup and Roster Efficiency — DONE (`e619eb7`) — see PROGRESS.md
 - **FFA-068** — Replacement-Level Player Value — DONE (`eff25d7`, hardened `b18c5e0`) — see PROGRESS.md
+- **FFA-071** — Player Analytics API — DONE (`6771979`) — see PROGRESS.md
 
 ## FFA-069 — Matchup Player Contribution Analysis
 
@@ -495,33 +496,9 @@ Analyze:
 
 ---
 
-## FFA-071 — Player Analytics API
-
-**Status:** IN PROGRESS  
-**Owner:** Software Engineer  
-**Depends on:** FFA-065 through FFA-070
-
-**Suggested commit:**
-
-```text
-feat: expose player and positional analytics
-```
-
-Expected DataFrames may include:
-
-```python
-analysis.player_weekly_df
-analysis.player_season_df
-analysis.position_summary_df
-analysis.roster_efficiency_df
-analysis.player_value_df
-```
-
----
-
 ## FFA-072 — Projection and Ranking Provider Interface
 
-**Status:** BACKLOG  
+**Status:** READY  
 **Owner:** Data Engineer  
 **Depends on:** FFA-071
 
@@ -667,14 +644,17 @@ Part 7 should begin only after league-specific scoring and matchup structures ar
 
 ## READY
 
-None.
+### FFA-072 — Projection and Ranking Provider Interface
+
+Its dependency, FFA-071, is DONE. This is the next ticket in the recommended
+sequence.
 
 ---
 
 ## BACKLOG
 
 ```text
-FFA-044, FFA-069, FFA-070, FFA-072
+FFA-044, FFA-069, FFA-070
 ```
 
 FFA-044 is unblocked on paper (FFA-022 and FFA-040 are both DONE) but is
@@ -682,7 +662,7 @@ intentionally left in BACKLOG rather than READY here since it is not the
 next ticket in the recommended sequence; an agent may still pick it up if
 explicitly assigned. FFA-069 (deps FFA-033, FFA-064) and FFA-070 (dep
 FFA-067) are likewise unblocked on paper and stay in BACKLOG for the same
-reason; FFA-072 remains blocked behind FFA-071.
+reason.
 
 Tickets become READY when their dependencies are complete and reviewed.
 
@@ -690,13 +670,7 @@ Tickets become READY when their dependencies are complete and reviewed.
 
 ## IN PROGRESS
 
-### FFA-071 — Player Analytics API
-
-Its dependency, FFA-068, is DONE. Every DataFrame the ticket expects
-(`player_weekly_df`, `player_season_df`, `position_summary_df`,
-`roster_efficiency_df`, `player_value_df`) is produced by FFA-065 through
-FFA-068, all DONE; the FFA-069 and FFA-070 frames can be added to the API
-when those tickets land.
+None.
 
 ---
 
@@ -708,7 +682,7 @@ None.
 
 ## DONE
 
-FFA-001 through FFA-057, FFA-060 through FFA-068 — see PROGRESS.md.
+FFA-001 through FFA-057, FFA-060 through FFA-068, FFA-071 — see PROGRESS.md.
 
 ---
 

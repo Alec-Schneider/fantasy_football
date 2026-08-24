@@ -788,3 +788,22 @@ The optimizer must respect league roster-position rules.
 - points above replacement
 - positional scarcity
 - league-relative player value
+
+---
+
+### FFA-071 — Player Analytics API
+**Commit:** `6771979` `feat: expose player and positional analytics`
+**Owner:** Software Engineer
+**Depends on:** FFA-065 through FFA-070 (FFA-069/FFA-070 still BACKLOG; every expected frame came from the DONE subset FFA-065–FFA-068)
+
+**Verification note:** Implemented in `src/fantasy_analyzer/players/player_analytics.py` — a frozen `PlayerAnalytics` dataclass plus a pure `build_player_analytics(...)` factory, mirroring `analytics/league_analytics.py`'s FFA-057 shape (no network access, no new metrics, callers build the player-week fact table first). Takes `player_week_df` (FFA-064), `roster_positions`/`num_teams` (league structure, not a `LeagueSnapshot`), and per-module boom/bust thresholds as constructor fields (frames are attributes, not methods, so thresholds can't be per-call arguments). Exposes seven frames: the five the ticket lists (`player_weekly_df`, `player_season_df`, `position_summary_df`, `roster_efficiency_df`, `player_value_df`) plus two extras that are the second output of dependencies that produce two (`lineup_efficiency_df`, `position_scarcity_df`), following the `playoff_brackets()`/`final_placements()` precedent. `player_season_df` is computed once at construction (reused by the two FFA-068 frames); every other frame is a lazy, unmemoized passthrough. Phase-agnostic and scoped to one league-season, inherited unchanged from its inputs. 24 new tests in `tests/players/test_player_analytics.py` (composition equality, argument passthrough, a hand-computed lineup-efficiency toy example, empty input, `num_teams=None`, missing values, tied VORP ranks, negative-threshold edge cases); full suite passes (600 tests) and `ruff check src tests` is clean. FFA-069/FFA-070 frames are explicitly not exposed yet — no placeholders were added; unblocks FFA-072.
+
+Expected DataFrames:
+
+```python
+analysis.player_weekly_df
+analysis.player_season_df
+analysis.position_summary_df
+analysis.roster_efficiency_df
+analysis.player_value_df
+```
