@@ -20,6 +20,15 @@ from fantasy_analyzer.players.nflverse_provider import (
     NflverseWeeklyStatsProvider,
     normalize_player_stats,
 )
+from fantasy_analyzer.players.performance import (
+    BOOM_BUST_THRESHOLD_STDEVS as PLAYER_BOOM_BUST_THRESHOLD_STDEVS,
+)
+from fantasy_analyzer.players.performance import (
+    MIN_GAMES_FOR_BOOM_BUST,
+    MIN_GAMES_FOR_DISPERSION,
+    PLAYER_PERFORMANCE_COLUMNS,
+    build_player_performance_metrics,
+)
 from fantasy_analyzer.players.player_week import (
     PLAYER_WEEK_COLUMNS,
     PlayerWeekFactTable,
@@ -58,4 +67,9 @@ __all__ = [
     "PLAYER_WEEK_COLUMNS",
     "PlayerWeekFactTable",
     "build_player_week_fact_table",
+    "PLAYER_PERFORMANCE_COLUMNS",
+    "PLAYER_BOOM_BUST_THRESHOLD_STDEVS",
+    "MIN_GAMES_FOR_DISPERSION",
+    "MIN_GAMES_FOR_BOOM_BUST",
+    "build_player_performance_metrics",
 ]
