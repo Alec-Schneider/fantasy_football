@@ -2,7 +2,8 @@
 
 A lightweight Python analytics package for fantasy football leagues hosted on
 [Sleeper](https://sleeper.com). See `AGENTS.md` for the full project roadmap,
-architecture principles, and ticket-based workflow.
+architecture principles, and ticket-based workflow. API reference and usage
+guides live under [`docs/`](docs/), starting with [`docs/league.md`](docs/league.md).
 
 The initial development and validation season is **2025**, using the Sleeper
 username `schneidbaby` as the primary development account. The application is
