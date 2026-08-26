@@ -34,9 +34,7 @@ def _gzipped_fixture(path: Path) -> bytes:
 
 
 def _mock_url(m: requests_mock_lib.Mocker, season: int = SEASON, **kwargs) -> None:
-    m.get(
-        NflverseClient.STATS_PLAYER_WEEK_URL_TEMPLATE.format(season=season), **kwargs
-    )
+    m.get(NflverseClient.STATS_PLAYER_WEEK_URL_TEMPLATE.format(season=season), **kwargs)
 
 
 @pytest.fixture
@@ -120,7 +118,7 @@ def test_normalize_leaves_sleeper_player_id_none_on_every_row(
 def test_normalize_handles_a_row_missing_gsis_id_and_team(
     raw_stats: pd.DataFrame,
 ) -> None:
-    """"Some Rookie" has a blank player_id and team in the fixture."""
+    """ "Some Rookie" has a blank player_id and team in the fixture."""
     result = normalize_player_stats(raw_stats, season=2025, week=1)
     rookie = result[result["player_name"] == "Some Rookie"].iloc[0]
 
@@ -300,9 +298,7 @@ def test_provider_reuses_disk_cache_across_provider_instances(
 
         # A second provider instance should read the now-populated disk
         # cache rather than hitting the network again.
-        result = NflverseWeeklyStatsProvider(cache_dir=tmp_path).weekly_stats(
-            SEASON, 2
-        )
+        result = NflverseWeeklyStatsProvider(cache_dir=tmp_path).weekly_stats(SEASON, 2)
         assert m.call_count == 1
 
     assert len(result) == 1
@@ -316,9 +312,7 @@ def test_provider_force_refresh_bypasses_the_disk_cache(
 
     with requests_mock_lib.Mocker() as m:
         _mock_url(m, content=_gzipped_fixture(nflverse_fixture_path))
-        provider = NflverseWeeklyStatsProvider(
-            cache_dir=tmp_path, force_refresh=True
-        )
+        provider = NflverseWeeklyStatsProvider(cache_dir=tmp_path, force_refresh=True)
         result = provider.weekly_stats(season=SEASON, week=1)
 
         assert m.called

@@ -185,9 +185,7 @@ def test_fgm_50p_sums_the_50_59_and_60_plus_bands() -> None:
     1 made 50-59 + 1 made 60+ = 2 made kicks in the 50p tier, each worth 5
     => 10.0 total.
     """
-    stats = pd.DataFrame(
-        [_stat_row(fg_made_50_59=1, fg_made_60_=1)]
-    )
+    stats = pd.DataFrame([_stat_row(fg_made_50_59=1, fg_made_60_=1)])
 
     result = calculate_fantasy_points(stats, {"fgm_50p": 5})
 

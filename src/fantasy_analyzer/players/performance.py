@@ -659,8 +659,6 @@ def build_player_performance_metrics(
         result["sleeper_player_id"].tolist(), dtype=object
     )
     for label_column in _LABEL_COLUMNS:
-        result[label_column] = pd.Series(
-            result[label_column].tolist(), dtype=object
-        )
+        result[label_column] = pd.Series(result[label_column].tolist(), dtype=object)
 
     return result[PLAYER_PERFORMANCE_COLUMNS]
