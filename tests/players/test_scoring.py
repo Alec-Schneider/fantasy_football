@@ -50,18 +50,30 @@ def _stat_row(**overrides: object) -> dict:
         "attempts",
         "passing_yards",
         "passing_tds",
-        "interceptions",
-        "sacks",
+        "passing_interceptions",
+        "sacks_suffered",
         "sack_fumbles_lost",
+        "passing_2pt_conversions",
         "carries",
         "rushing_yards",
         "rushing_tds",
         "rushing_fumbles_lost",
+        "rushing_2pt_conversions",
         "receptions",
         "targets",
         "receiving_yards",
         "receiving_tds",
         "receiving_fumbles_lost",
+        "receiving_2pt_conversions",
+        "fg_made_0_19",
+        "fg_made_20_29",
+        "fg_made_30_39",
+        "fg_made_40_49",
+        "fg_made_50_59",
+        "fg_made_60_",
+        "fg_missed",
+        "pat_made",
+        "pat_missed",
     ):
         row[stat_column] = 0
     row.update(overrides)
@@ -78,7 +90,7 @@ def test_toy_example_matches_hand_computed_total() -> None:
 
     passing_yards=300 * 0.04       = 12.0
     passing_tds=3    * 4           = 12.0
-    interceptions=1  * -2          = -2.0
+    passing_interceptions=1 * -2   = -2.0
     rushing_yards=20 * 0.1         =  2.0
     rushing_tds=0    * 6           =  0.0
     rushing_fumbles_lost=1 * -2    = -2.0 (fum_lost; the other two fumble
@@ -90,7 +102,7 @@ def test_toy_example_matches_hand_computed_total() -> None:
             _stat_row(
                 passing_yards=300,
                 passing_tds=3,
-                interceptions=1,
+                passing_interceptions=1,
                 rushing_yards=20,
                 rushing_fumbles_lost=1,
             )
@@ -113,12 +125,23 @@ def test_toy_example_matches_hand_computed_total() -> None:
     [
         ("passing_yards", 250, "pass_yd", 0.04, 10.0),
         ("passing_tds", 2, "pass_td", 4, 8.0),
-        ("interceptions", 1, "pass_int", -2, -2.0),
+        ("passing_interceptions", 1, "pass_int", -2, -2.0),
+        ("sacks_suffered", 2, "pass_sack", -1, -2.0),
+        ("passing_2pt_conversions", 1, "pass_2pt", 2, 2.0),
         ("rushing_yards", 80, "rush_yd", 0.1, 8.0),
         ("rushing_tds", 1, "rush_td", 6, 6.0),
+        ("rushing_2pt_conversions", 1, "rush_2pt", 2, 2.0),
         ("receptions", 5, "rec", 0.5, 2.5),
         ("receiving_yards", 60, "rec_yd", 0.1, 6.0),
         ("receiving_tds", 1, "rec_td", 6, 6.0),
+        ("receiving_2pt_conversions", 1, "rec_2pt", 2, 2.0),
+        ("fg_made_0_19", 1, "fgm_0_19", 3, 3.0),
+        ("fg_made_20_29", 1, "fgm_20_29", 3, 3.0),
+        ("fg_made_30_39", 1, "fgm_30_39", 3, 3.0),
+        ("fg_made_40_49", 1, "fgm_40_49", 4, 4.0),
+        ("fg_missed", 2, "fgmiss", -1, -2.0),
+        ("pat_made", 3, "xpm", 1, 3.0),
+        ("pat_missed", 1, "xpmiss", -1, -1.0),
     ],
 )
 def test_single_category_matches_hand_computed_value(
@@ -156,6 +179,21 @@ def test_fum_lost_sums_across_every_fumble_lost_column() -> None:
     assert result.points_df.loc[0, "fantasy_points"] == pytest.approx(-6.0)
 
 
+def test_fgm_50p_sums_the_50_59_and_60_plus_bands() -> None:
+    """Sleeper's fgm_50p merges nflverse's separate 50-59/60+ FG bands.
+
+    1 made 50-59 + 1 made 60+ = 2 made kicks in the 50p tier, each worth 5
+    => 10.0 total.
+    """
+    stats = pd.DataFrame(
+        [_stat_row(fg_made_50_59=1, fg_made_60_=1)]
+    )
+
+    result = calculate_fantasy_points(stats, {"fgm_50p": 5})
+
+    assert result.points_df.loc[0, "fantasy_points"] == pytest.approx(10.0)
+
+
 def test_multiple_categories_sum_together() -> None:
     """4 completions * 0.5 + 10 receptions * 1.0 = 12.0."""
     stats = pd.DataFrame([_stat_row(completions=4, receptions=10)])
@@ -188,7 +226,7 @@ def test_stat_column_entirely_absent_contributes_zero() -> None:
 
     result = calculate_fantasy_points(stats, {"pass_int": -2, "rec": 0.5})
 
-    # pass_int has no interceptions column present -> 0 contribution.
+    # pass_int has no passing_interceptions column present -> 0 contribution.
     # rec: 3 * 0.5 = 1.5.
     assert result.points_df.loc[0, "fantasy_points"] == pytest.approx(1.5)
     assert result.unsupported_scoring_keys == []
@@ -203,10 +241,10 @@ def test_unsupported_key_is_surfaced_not_silently_dropped() -> None:
     stats = pd.DataFrame([_stat_row(receptions=4)])
 
     result = calculate_fantasy_points(
-        stats, {"rec": 0.5, "bonus_rec_te": 0.5, "pass_2pt": 2}
+        stats, {"rec": 0.5, "bonus_rec_te": 0.5, "pts_allow_0": 10}
     )
 
-    assert result.unsupported_scoring_keys == ["bonus_rec_te", "pass_2pt"]
+    assert result.unsupported_scoring_keys == ["bonus_rec_te", "pts_allow_0"]
     # Only the supported "rec" key contributes: 4 * 0.5 = 2.0.
     assert result.points_df.loc[0, "fantasy_points"] == pytest.approx(2.0)
 

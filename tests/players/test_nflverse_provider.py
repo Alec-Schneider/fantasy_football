@@ -67,10 +67,10 @@ def test_normalize_filters_to_the_requested_season_and_week(
 ) -> None:
     result = normalize_player_stats(raw_stats, season=2025, week=1)
 
-    assert len(result) == 2
+    assert len(result) == 3
     assert set(result["season"]) == {2025}
     assert set(result["week"]) == {1}
-    assert list(result["player_name"]) == ["Josh Allen", "Some Rookie"]
+    assert list(result["player_name"]) == ["Josh Allen", "Some Rookie", "Kris Booter"]
 
 
 def test_normalize_excludes_other_seasons(raw_stats: pd.DataFrame) -> None:
@@ -120,7 +120,7 @@ def test_normalize_leaves_sleeper_player_id_none_on_every_row(
 def test_normalize_handles_a_row_missing_gsis_id_and_team(
     raw_stats: pd.DataFrame,
 ) -> None:
-    """"Some Rookie" has a blank player_id and recent_team in the fixture."""
+    """"Some Rookie" has a blank player_id and team in the fixture."""
     result = normalize_player_stats(raw_stats, season=2025, week=1)
     rookie = result[result["player_name"] == "Some Rookie"].iloc[0]
 
@@ -174,6 +174,27 @@ def test_normalize_passes_through_documented_raw_stat_columns(
     assert chase["receiving_tds"] == 1
     for stat_column in RAW_STAT_COLUMNS:
         assert stat_column in result.columns
+
+
+def test_normalize_passes_through_kicker_and_two_point_stat_columns(
+    raw_stats: pd.DataFrame,
+) -> None:
+    """Kris Booter (K) exercises the fg/pat columns; Josh Allen exercises pass_2pt."""
+    result = normalize_player_stats(raw_stats, season=2025, week=1)
+
+    booter = result[result["player_name"] == "Kris Booter"].iloc[0]
+    assert booter["position"] == "K"
+    assert booter["nfl_team"] == "SEA"
+    assert booter["fg_made_0_19"] == 1
+    assert booter["fg_made_50_59"] == 1
+    assert booter["fg_made_60_"] == 0
+    assert booter["fg_missed"] == 1
+    assert booter["pat_made"] == 3
+
+    allen = result[result["player_name"] == "Josh Allen"].iloc[0]
+    assert allen["passing_2pt_conversions"] == 1
+    assert allen["passing_interceptions"] == 0
+    assert allen["sacks_suffered"] == 1
 
 
 def test_normalize_does_not_pass_through_fantasy_points(
@@ -235,7 +256,7 @@ def test_provider_weekly_stats_returns_the_requested_week(
         _mock_url(m, content=_gzipped_fixture(nflverse_fixture_path))
         result = provider.weekly_stats(season=SEASON, week=1)
 
-    assert len(result) == 2
+    assert len(result) == 3
     validate_player_week_columns(result)
 
 
@@ -302,7 +323,7 @@ def test_provider_force_refresh_bypasses_the_disk_cache(
 
         assert m.called
 
-    assert len(result) == 2
+    assert len(result) == 3
 
 
 def test_provider_populates_sleeper_player_id_when_constructed_with_crosswalk(

@@ -30,8 +30,17 @@ Identity column   nflverse source column
                    ``"J.Allen"`` -- deliberately not used here, since it
                    collides with this interface's own ``player_name``
                    identity column and is less useful as a display name)
-``nfl_team``      ``recent_team``
+``nfl_team``      ``team``
 ================  =====================================================
+
+.. note::
+   ``team`` (formerly ``recent_team``), ``passing_interceptions``
+   (formerly ``interceptions``), and ``sacks_suffered`` (formerly
+   ``sacks``) reflect the column names as of the current
+   ``stats_player_week`` release. The pre-migration ``player_stats``
+   release (see ``nflverse_client``'s docstring) used the older names;
+   this module targets only the current release, since that is the only
+   one ``NflverseClient`` downloads from.
 
 ``sleeper_player_id`` requires an optional crosswalk
 -------------------------------------------------------
@@ -58,13 +67,24 @@ Additional stat columns
 
 Beyond the required identity prefix, this provider passes through a fixed,
 documented subset of nflverse's raw per-stat columns (see
-:data:`RAW_STAT_COLUMNS`): basic passing/rushing/receiving counting stats
-likely to matter for a league's scoring rules. Deliberately excluded:
-nflverse's own ``fantasy_points``/``fantasy_points_ppr`` columns (computing
-fantasy points from a league's actual scoring settings is FFA-063's job,
-not this provider's), and advanced/efficiency metrics (``passing_epa``,
-``racr``, ``dakota``, target/air-yards shares, etc.) that are out of scope
-for a raw per-stat pass-through.
+:data:`RAW_STAT_COLUMNS`): basic passing/rushing/receiving counting stats,
+two-point conversions, and kicking stats (field-goal-distance bands and
+extra points) likely to matter for a league's scoring rules. Deliberately
+excluded: nflverse's own ``fantasy_points``/``fantasy_points_ppr`` columns
+(computing fantasy points from a league's actual scoring settings is
+FFA-063's job, not this provider's), and advanced/efficiency metrics
+(``passing_epa``, ``racr``, ``dakota``, target/air-yards shares, etc.)
+that are out of scope for a raw per-stat pass-through.
+
+The current release also carries individual-level defensive stats
+(``def_sacks``, ``def_interceptions``, ``def_tds``, etc.) and points
+allowed is not present in this table at all. Neither is passed through
+here: a Sleeper ``DEF`` roster slot represents a whole *team* defense, not
+an individual player, so scoring it needs these per-player defensive rows
+aggregated up to team+game plus a separate points-allowed data source --
+out of scope for this provider, which returns one row per rostered
+*player*. See ``scoring.py``'s module docstring for how this shows up in
+``unsupported_scoring_keys``.
 
 Invalid ``season``/``week``
 -----------------------------
@@ -99,7 +119,7 @@ _IDENTITY_SOURCE_COLUMNS = {
     "gsis_id": "player_id",
     "player_name": "player_display_name",
     "position": "position",
-    "nfl_team": "recent_team",
+    "nfl_team": "team",
 }
 
 #: Raw nflverse per-stat columns passed through beyond the required identity
@@ -110,18 +130,30 @@ RAW_STAT_COLUMNS = [
     "attempts",
     "passing_yards",
     "passing_tds",
-    "interceptions",
-    "sacks",
+    "passing_interceptions",
+    "sacks_suffered",
     "sack_fumbles_lost",
+    "passing_2pt_conversions",
     "carries",
     "rushing_yards",
     "rushing_tds",
     "rushing_fumbles_lost",
+    "rushing_2pt_conversions",
     "receptions",
     "targets",
     "receiving_yards",
     "receiving_tds",
     "receiving_fumbles_lost",
+    "receiving_2pt_conversions",
+    "fg_made_0_19",
+    "fg_made_20_29",
+    "fg_made_30_39",
+    "fg_made_40_49",
+    "fg_made_50_59",
+    "fg_made_60_",
+    "fg_missed",
+    "pat_made",
+    "pat_missed",
 ]
 
 

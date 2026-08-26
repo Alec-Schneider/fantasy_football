@@ -35,9 +35,9 @@ def test_download_player_stats_returns_a_dataframe(
         )
         result = client.download_player_stats(2025)
 
-    assert len(result) == 4
+    assert len(result) == 5
     assert "player_id" in result.columns
-    assert "recent_team" in result.columns
+    assert "team" in result.columns
     assert set(result["season"]) == {2024, 2025}
 
 

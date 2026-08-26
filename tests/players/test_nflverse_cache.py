@@ -52,7 +52,7 @@ def test_refresh_player_stats_cache_writes_table_to_disk(
     cache_path = cache_dir / f"player_stats_{SEASON}.csv"
     assert cache_path.exists()
     on_disk = pd.read_csv(cache_path)
-    assert len(on_disk) == len(result) == 4
+    assert len(on_disk) == len(result) == 5
 
 
 def test_load_player_stats_cache_reads_existing_cache_without_network(
@@ -67,7 +67,7 @@ def test_load_player_stats_cache_reads_existing_cache_without_network(
 
         assert not m.called
 
-    assert len(result) == 4
+    assert len(result) == 5
 
 
 def test_get_player_stats_cached_loads_from_cache_without_network(
@@ -83,7 +83,7 @@ def test_get_player_stats_cached_loads_from_cache_without_network(
 
         assert not m.called
 
-    assert len(result) == 4
+    assert len(result) == 5
 
 
 def test_get_player_stats_cached_refreshes_when_no_cache_present(
@@ -95,7 +95,7 @@ def test_get_player_stats_cached_refreshes_when_no_cache_present(
         _mock_url(m, content=_gzipped_fixture(nflverse_fixture_path))
         result = get_player_stats_cached(client, SEASON, tmp_path)
 
-    assert len(result) == 4
+    assert len(result) == 5
     assert (tmp_path / f"player_stats_{SEASON}.csv").exists()
 
 
@@ -112,6 +112,6 @@ def test_get_player_stats_cached_force_refresh_ignores_existing_cache(
 
         assert m.called
 
-    assert len(result) == 4
+    assert len(result) == 5
     on_disk = pd.read_csv(cache_path)
-    assert len(on_disk) == 4
+    assert len(on_disk) == 5

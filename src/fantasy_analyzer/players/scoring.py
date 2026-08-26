@@ -37,38 +37,57 @@ Mapping table: Sleeper scoring key -> raw stat column(s)
 
 Grounded against ``tests/fixtures/sleeper/league.json``'s real
 ``scoring_settings`` block (``pass_yd``, ``pass_td``, ``pass_int``,
-``rush_yd``, ``rush_td``, ``rec``, ``rec_yd``, ``rec_td``, ``fum_lost``, all
-present there) plus a small number of additional, unambiguous Sleeper keys
-whose raw stat exists in
+``rush_yd``, ``rush_td``, ``rec``, ``rec_yd``, ``rec_td``, ``fum_lost``,
+all present there) and the real scoring settings of this project's primary
+development league (which additionally uses ``pass_2pt``/``rush_2pt``/
+``rec_2pt`` and the tiered ``fgm_*``/``fgmiss``/``xpm``/``xpmiss`` kicker
+categories -- see below), plus a small number of additional, unambiguous
+Sleeper keys whose raw stat exists in
 :data:`~fantasy_analyzer.players.nflverse_provider.RAW_STAT_COLUMNS`:
 
-=============  =====================  ===================================
-Sleeper key    Raw stat column(s)     Meaning
-=============  =====================  ===================================
-``pass_yd``    ``passing_yards``      Points per passing yard
-``pass_td``    ``passing_tds``        Points per passing touchdown
-``pass_int``   ``interceptions``      Points per interception thrown
-``pass_cmp``   ``completions``        Points per completion
-``pass_att``   ``attempts``           Points per pass attempt
-``pass_sack``  ``sacks``              Points per sack taken
-``rush_att``   ``carries``            Points per rush attempt
-``rush_yd``    ``rushing_yards``      Points per rushing yard
-``rush_td``    ``rushing_tds``        Points per rushing touchdown
-``rec``        ``receptions``         Points per reception
-``rec_tgt``    ``targets``            Points per target
-``rec_yd``     ``receiving_yards``    Points per receiving yard
-``rec_td``     ``receiving_tds``      Points per receiving touchdown
-``fum_lost``   sum of the three       Points per fumble lost, summed
-               ``*_fumbles_lost``     across every fumble-lost column
-               columns (sack/rush/    nflverse breaks out by play type --
-               receiving)             Sleeper scores it the same either way
-=============  =====================  ===================================
+=============  =============================  ========================
+Sleeper key    Raw stat column                Per
+=============  =============================  ========================
+``pass_yd``    ``passing_yards``              passing yard
+``pass_td``    ``passing_tds``                passing touchdown
+``pass_int``   ``passing_interceptions``      interception thrown
+``pass_cmp``   ``completions``                completion
+``pass_att``   ``attempts``                   pass attempt
+``pass_sack``  ``sacks_suffered``             sack taken
+``pass_2pt``   ``passing_2pt_conversions``    passing 2pt conversion
+``rush_att``   ``carries``                    rush attempt
+``rush_yd``    ``rushing_yards``              rushing yard
+``rush_td``    ``rushing_tds``                rushing touchdown
+``rush_2pt``   ``rushing_2pt_conversions``    rushing 2pt conversion
+``rec``        ``receptions``                 reception
+``rec_tgt``    ``targets``                    target
+``rec_yd``     ``receiving_yards``            receiving yard
+``rec_td``     ``receiving_tds``              receiving touchdown
+``rec_2pt``    ``receiving_2pt_conversions``  receiving 2pt conversion
+``fgm_0_19``   ``fg_made_0_19``               made FG, 0-19 yards
+``fgm_20_29``  ``fg_made_20_29``              made FG, 20-29 yards
+``fgm_30_39``  ``fg_made_30_39``              made FG, 30-39 yards
+``fgm_40_49``  ``fg_made_40_49``              made FG, 40-49 yards
+``xpm``        ``pat_made``                   made extra point
+``xpmiss``     ``pat_missed``                 missed extra point
+=============  =============================  ========================
+
+Three keys don't fit the one-key-to-one-or-more-columns shape of the table
+above cleanly enough to render as a single row, so they're called out
+here instead:
+
+- ``fum_lost`` sums the three ``*_fumbles_lost`` columns (sack/rush/
+  receiving fumbles lost) -- nflverse breaks these out by play type,
+  Sleeper scores them the same regardless of which one occurred.
+- ``fgm_50p`` sums ``fg_made_50_59`` and ``fg_made_60_`` -- nflverse splits
+  a 50-59 and a 60+ band, Sleeper's ``fgm_50p`` merges both into one 50+
+  tier.
+- ``fgmiss`` (missed field goal, any distance -- Sleeper does not band
+  this one) maps to nflverse's ``fg_missed`` total column, not a sum of
+  the missed-by-distance columns.
 
 Deliberately **not** mapped (surfaced as unsupported, never guessed at):
 
-- ``pass_2pt`` / ``rush_2pt`` / ``rec_2pt`` (two-point conversions): no
-  two-point-conversion count exists in
-  :data:`~fantasy_analyzer.players.nflverse_provider.RAW_STAT_COLUMNS`.
 - ``fum`` (total fumbles, lost or not): nflverse's raw columns only expose
   fumbles *lost* per play type (``sack_fumbles_lost``,
   ``rushing_fumbles_lost``, ``receiving_fumbles_lost``); there is no "total
@@ -84,10 +103,19 @@ Deliberately **not** mapped (surfaced as unsupported, never guessed at):
   both categories are left unmapped and therefore always surfaced via
   :attr:`ScoringResult.unsupported_scoring_keys` -- a documented gap, not a
   silent zero.
-- Any IDP/defense/kicker scoring category: this provider's raw stat
-  columns are offensive skill-position counting stats only (see
-  ``RAW_STAT_COLUMNS``'s own docstring); no defensive or kicking raw stats
-  exist to map from.
+- Any team-``DEF``/IDP scoring category (``sack``, ``int``, ``fum_rec``,
+  ``safe``, ``blk_kick``, ``def_st_td``, ``pts_allow_*``, etc.): nflverse's
+  defensive stats are attributed to individual IDP players, not a team
+  unit, and points allowed isn't in this provider's data at all -- see
+  ``nflverse_provider``'s module docstring. A Sleeper ``DEF`` roster slot
+  has no corresponding row in this provider's per-player output, so these
+  keys are always unsupported regardless of which raw stats exist.
+
+``fgm_0_19``/``fgm_50p`` were **not** possible against the pre-migration
+``player_stats`` release nflverse used to publish (see
+``nflverse_client``'s docstring for that migration) -- it carried no
+kicking columns at all. They became mappable once the client was
+repointed at the current ``stats_player_week`` release, which does.
 
 Unsupported-key policy: surfaced, not silently dropped or raised
 -------------------------------------------------------------------
@@ -178,22 +206,33 @@ import pandas as pd
 SCORING_KEY_TO_STAT_COLUMNS: dict[str, tuple[str, ...]] = {
     "pass_yd": ("passing_yards",),
     "pass_td": ("passing_tds",),
-    "pass_int": ("interceptions",),
+    "pass_int": ("passing_interceptions",),
     "pass_cmp": ("completions",),
     "pass_att": ("attempts",),
-    "pass_sack": ("sacks",),
+    "pass_sack": ("sacks_suffered",),
+    "pass_2pt": ("passing_2pt_conversions",),
     "rush_att": ("carries",),
     "rush_yd": ("rushing_yards",),
     "rush_td": ("rushing_tds",),
+    "rush_2pt": ("rushing_2pt_conversions",),
     "rec": ("receptions",),
     "rec_tgt": ("targets",),
     "rec_yd": ("receiving_yards",),
     "rec_td": ("receiving_tds",),
+    "rec_2pt": ("receiving_2pt_conversions",),
     "fum_lost": (
         "sack_fumbles_lost",
         "rushing_fumbles_lost",
         "receiving_fumbles_lost",
     ),
+    "fgm_0_19": ("fg_made_0_19",),
+    "fgm_20_29": ("fg_made_20_29",),
+    "fgm_30_39": ("fg_made_30_39",),
+    "fgm_40_49": ("fg_made_40_49",),
+    "fgm_50p": ("fg_made_50_59", "fg_made_60_"),
+    "fgmiss": ("fg_missed",),
+    "xpm": ("pat_made",),
+    "xpmiss": ("pat_missed",),
 }
 
 
