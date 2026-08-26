@@ -27,10 +27,14 @@ import pytest
 
 from fantasy_analyzer.matchups.season_matchups import SEASON_MATCHUP_COLUMNS
 from fantasy_analyzer.players import (
+    DEFAULT_RANKING_WEIGHTS,
+    DEFAULT_RATE_SHRINKAGE_GAMES,
     PLAYER_WEEK_COLUMNS,
     PlayerAnalytics,
+    RankingWeights,
     build_bench_allocation_metrics,
     build_flex_usage_metrics,
+    build_league_player_rankings,
     build_lineup_efficiency_metrics,
     build_matchup_player_contributions,
     build_player_analytics,
@@ -366,6 +370,148 @@ def test_position_scarcity_df_matches_chained_composition() -> None:
         build_player_performance_metrics(_toy_df()), ROSTER_POSITIONS, NUM_TEAMS
     )
     pd.testing.assert_frame_equal(analytics.position_scarcity_df, expected)
+
+
+# --- player_ranking_df (FFA-073) -------------------------------------------
+
+
+def test_player_ranking_df_matches_chained_composition() -> None:
+    """The accessor must equal chaining build_player_performance_metrics into
+    build_league_player_rankings on the same inputs, not a parallel path.
+    """
+    analytics = _toy_analytics()
+
+    expected = build_league_player_rankings(
+        build_player_performance_metrics(_toy_df()), ROSTER_POSITIONS, NUM_TEAMS
+    )
+    pd.testing.assert_frame_equal(analytics.player_ranking_df, expected)
+
+
+def test_player_ranking_df_uses_the_eagerly_built_player_season_df() -> None:
+    analytics = _toy_analytics()
+
+    expected = build_league_player_rankings(
+        analytics.player_season_df, ROSTER_POSITIONS, NUM_TEAMS
+    )
+    pd.testing.assert_frame_equal(analytics.player_ranking_df, expected)
+
+
+def test_player_ranking_df_passes_through_custom_weights() -> None:
+    """A non-default weight vector must reach the module, not be dropped."""
+    weights = RankingWeights(
+        value=0.0, rate=0.0, reliability=1.0, upside=0.0, scarcity=0.0
+    )
+    analytics = _toy_analytics(ranking_weights=weights)
+
+    expected = build_league_player_rankings(
+        analytics.player_season_df, ROSTER_POSITIONS, NUM_TEAMS, weights=weights
+    )
+    pd.testing.assert_frame_equal(analytics.player_ranking_df, expected)
+    # One component, renormalized, so the score is exactly z_reliability.
+    ranked = analytics.player_ranking_df
+    assert list(ranked["ranking_score"]) == pytest.approx(list(ranked["z_reliability"]))
+
+
+def test_player_ranking_df_passes_through_custom_shrinkage() -> None:
+    analytics = _toy_analytics(rate_shrinkage_games=0.0)
+
+    expected = build_league_player_rankings(
+        analytics.player_season_df,
+        ROSTER_POSITIONS,
+        NUM_TEAMS,
+        rate_shrinkage_games=0.0,
+    )
+    pd.testing.assert_frame_equal(analytics.player_ranking_df, expected)
+    # k = 0 degenerates to the raw rate exactly.
+    ranked = analytics.player_ranking_df
+    assert list(ranked["shrunk_ppg_above_replacement"]) == pytest.approx(
+        list(ranked["ppg_above_replacement"])
+    )
+
+
+def test_ranking_defaults_are_the_modules_defaults() -> None:
+    analytics = _toy_analytics()
+
+    assert analytics.ranking_weights == DEFAULT_RANKING_WEIGHTS
+    assert analytics.rate_shrinkage_games == DEFAULT_RATE_SHRINKAGE_GAMES
+
+
+def test_player_ranking_df_reflects_the_custom_player_threshold_frame() -> None:
+    """The ranking frame consumes this instance's own performance frame, so a
+    custom player threshold flows through to it too.
+    """
+    analytics = _toy_analytics(player_boom_bust_threshold=0.5)
+
+    expected = build_league_player_rankings(
+        build_player_performance_metrics(_toy_df(), boom_bust_threshold=0.5),
+        ROSTER_POSITIONS,
+        NUM_TEAMS,
+    )
+    pd.testing.assert_frame_equal(analytics.player_ranking_df, expected)
+
+
+def test_player_ranking_df_does_not_need_season_matchup_df() -> None:
+    """Unlike the FFA-069 frames, this one never reads season_matchup_df."""
+    analytics = _toy_analytics()
+
+    assert analytics.season_matchup_df is None
+    assert not analytics.player_ranking_df.empty
+
+
+def test_player_ranking_df_disagrees_with_ffa_068_value_rank() -> None:
+    """The composite is a different ordering from FFA-068's value_rank.
+
+    Both frames cover the same players, so the id sets must match exactly;
+    the ranks themselves are free to differ, and the accessor must not
+    silently be returning the FFA-068 frame under a new name.
+    """
+    analytics = _toy_analytics()
+    ranked = analytics.player_ranking_df
+    valued = analytics.player_value_df
+
+    assert set(ranked["sleeper_player_id"]) == set(valued["sleeper_player_id"])
+    assert "ranking_score" in ranked.columns
+    assert "ranking_score" not in valued.columns
+    assert "value_rank" not in ranked.columns
+
+
+def test_build_player_analytics_forwards_the_ranking_settings() -> None:
+    weights = RankingWeights(value=1.0, rate=0.0, reliability=0.0, upside=0.0)
+    analytics = build_player_analytics(
+        _toy_df(),
+        ROSTER_POSITIONS,
+        NUM_TEAMS,
+        ranking_weights=weights,
+        rate_shrinkage_games=0.0,
+    )
+
+    assert analytics.ranking_weights == weights
+    assert analytics.rate_shrinkage_games == 0.0
+    expected = build_league_player_rankings(
+        analytics.player_season_df,
+        ROSTER_POSITIONS,
+        NUM_TEAMS,
+        weights=weights,
+        rate_shrinkage_games=0.0,
+    )
+    pd.testing.assert_frame_equal(analytics.player_ranking_df, expected)
+
+
+def test_ranking_settings_are_keyword_compatible_with_positional_calls() -> None:
+    """The two new fields are declared last, so existing positional calls
+    through season_matchup_df keep working unchanged.
+    """
+    analytics = PlayerAnalytics(
+        _toy_df(),
+        ROSTER_POSITIONS,
+        NUM_TEAMS,
+        1.0,
+        1.0,
+        None,
+    )
+
+    assert analytics.ranking_weights == DEFAULT_RANKING_WEIGHTS
+    assert analytics.rate_shrinkage_games == DEFAULT_RATE_SHRINKAGE_GAMES
 
 
 def test_num_teams_none_passes_through_without_raising() -> None:
