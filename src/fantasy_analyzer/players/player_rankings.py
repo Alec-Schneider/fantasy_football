@@ -95,8 +95,8 @@ and
 
 over the components ``c`` that are **available for that player** (see
 "Missing components" below). The default weights --
-:data:`DEFAULT_RANKING_WEIGHTS`, i.e. ``value 0.40, rate 0.25,
-reliability 0.15, upside 0.10, scarcity 0.10`` -- sum to exactly 1.0, so
+:data:`DEFAULT_RANKING_WEIGHTS`, i.e. ``value 0.30, rate 0.20,
+reliability 0.20, upside 0.15, scarcity 0.15`` -- sum to exactly 1.0, so
 for a player with all five components the denominator is 1.0 and
 ``ranking_score`` is a plain weighted sum. Weights are **not required** to
 sum to 1.0: they are renormalized by the denominator above, so
@@ -120,27 +120,50 @@ pretend otherwise: nothing here was estimated from data, backtested, or
 validated against a holdout. They are documented, named, and overridable
 for exactly the reason ``power_rankings.py``'s three weights are:
 
-- **value (0.40)** -- the largest single weight, because banked surplus
+- **value (0.30)** -- the largest single weight, because banked surplus
   points is the least assumption-laden thing this codebase measures, and
   because it is the one component that carries volume information at all.
-- **rate (0.25)** -- the games-neutral companion to ``value``, shrunk (see
+- **rate (0.20)** -- the games-neutral companion to ``value``, shrunk (see
   below) so a tiny sample cannot dominate. Together, value and rate hold
-  0.65 of the blend: the composite is still primarily a scoring-production
-  ranking.
-- **reliability (0.15)** -- week-to-week volatility relative to the
-  player's own level. Third-largest because a fantasy manager starts a
-  player one week at a time, so distribution shape has real decision value,
-  but it is a second-order effect next to how much he scored.
-- **upside (0.10)** -- the single best game above the position baseline.
-  Small, because ``scoring_ceiling`` is a single observation and is the
-  most sample-size-sensitive column FFA-065 emits (see that module's
-  docstring).
-- **scarcity (0.10)** -- see the honest accounting immediately below.
+  0.50 of the blend: the composite is still primarily a scoring-production
+  ranking, but only half of it, deliberately -- see "value and rate are not
+  independent" below for why their combined weight is capped at half.
+- **reliability (0.20)** -- week-to-week volatility relative to the
+  player's own level. Tied with ``value`` as the largest weight on a
+  *single* independent signal, because a fantasy manager starts a player
+  one week at a time, so distribution shape has real decision value, and
+  because it is the largest component that is genuinely uncorrelated with
+  the value/rate axis.
+- **upside (0.15)** -- the single best game above the position baseline.
+  Kept below ``reliability`` because ``scoring_ceiling`` is a single
+  observation and is the most sample-size-sensitive column FFA-065 emits
+  (see that module's docstring).
+- **scarcity (0.15)** -- see the honest accounting immediately below.
+
+value and rate are not independent -- why their combined weight is capped
+--------------------------------------------------------------------------
+
+``points_above_replacement == games_played * ppg_above_replacement``
+whenever ``total_points == points_per_game * games_played``, which is true
+of every frame FFA-065 produces. ``z_value`` and ``z_rate`` are therefore
+two views of one quantity, and when ``games_played`` is constant across the
+pool -- a full-season frame with no injuries, and every hand-built toy
+example in this module's tests -- ``shrunk_ppg_above_replacement`` is a
+positive rescale of ``points_above_replacement`` and the two z-scores are
+**exactly equal**. Shrinkage is the only thing that separates them, so the
+split does real work only on partial-season players.
+
+Their combined weight is capped at 0.50 for that reason: a higher combined
+weight does not buy a more production-weighted ranking, it buys the same
+production signal counted twice at the expense of the three components that
+carry independent information. The 0.30/0.20 split within that 0.50 gives
+volume the edge over rate, which is the only part of the split that is a
+judgment call rather than an accounting fact.
 
 Scarcity is deliberately double-counted -- read this before using it
 --------------------------------------------------------------------------
 
-``scarcity`` is weighted **on by default at 0.10**, and that default
+``scarcity`` is weighted **on by default at 0.15**, and that default
 **double-counts positional thinness**. This is stated plainly rather than
 buried, because it is the one place where this module's output is not a
 pure measure of realized points:
@@ -566,11 +589,11 @@ class RankingWeights:
             weight is zero (no defined normalization).
     """
 
-    value: float = 0.40
-    rate: float = 0.25
-    reliability: float = 0.15
-    upside: float = 0.10
-    scarcity: float = 0.10
+    value: float = 0.30
+    rate: float = 0.20
+    reliability: float = 0.20
+    upside: float = 0.15
+    scarcity: float = 0.15
 
     def __post_init__(self) -> None:
         for field_name in _COMPONENT_WEIGHT_FIELDS:

@@ -165,21 +165,28 @@ def _toy_rows() -> list[dict]:
         pvar = (2*(5/24)^2 + (5/12)^2)/6 = (50/576 + 100/576)/6 = 25/576;
         pstdev = 5/24. z: QB players 0, RB players 1, WR1 -2.
 
-    ranking_score, default weights (0.40 value, 0.25 rate, 0.15 reliability,
-    0.10 upside, 0.10 scarcity -- they sum to 1.0 and all five components
+    Because all six players have 16 games, shrunk_ppg_above_replacement is
+    a positive rescale of points_above_replacement here, so z_rate == z_value
+    by construction in this toy (see the module docstring's "value and rate
+    are not independent"). The shrinkage tests below cover the case where
+    they diverge.
+
+    ranking_score, default weights (0.30 value, 0.20 rate, 0.20 reliability,
+    0.15 upside, 0.15 scarcity -- they sum to 1.0 and all five components
     are available for all six players, so no renormalization applies):
 
-        QB1  .4(0.5)  + .25(0.5)  + .15(1.0)  + .10(1.4)  + .10(0)  =  0.6150
-        QB2  .4(-.25) + .25(-.25) + .15(-1.4) + .10(0.2)  + .10(0)  = -0.3525
-        QB3  .4(-.75) + .25(-.75) + .15(-0.2) + .10(-1.0) + .10(0)  = -0.6175
-        RB1  .4(2.0)  + .25(2.0)  + .15(0.2)  + .10(1.0)  + .10(1)  =  1.5300
-        RB2  .4(-.75) + .25(-.75) + .15(1.4)  + .10(-1.4) + .10(1)  = -0.3175
-        WR1  .4(-.75) + .25(-.75) + .15(-1.0) + .10(-0.2) + .10(-2) = -0.8575
+        QB1  .3(0.5)  + .2(0.5)  + .2(1.0)  + .15(1.4)  + .15(0)  =  0.6600
+        QB2  .3(-.25) + .2(-.25) + .2(-1.4) + .15(0.2)  + .15(0)  = -0.3750
+        QB3  .3(-.75) + .2(-.75) + .2(-0.2) + .15(-1.0) + .15(0)  = -0.5650
+        RB1  .3(2.0)  + .2(2.0)  + .2(0.2)  + .15(1.0)  + .15(1)  =  1.3400
+        RB2  .3(-.75) + .2(-.75) + .2(1.4)  + .15(-1.4) + .15(1)  = -0.1550
+        WR1  .3(-.75) + .2(-.75) + .2(-1.0) + .15(-0.2) + .15(-2) = -0.9050
 
     league_rank (no ties): RB1 1, QB1 2, RB2 3, QB2 4, QB3 5, WR1 6.
-    Note RB2 -- a replacement-level RB with zero VORP -- outranks QB2 on
-    reliability plus the scarcity tilt; ``test_scarcity_weight_zero_...``
-    below shows that flipping with ``scarcity=0.0``.
+    Note RB2 -- a replacement-level RB with zero VORP -- outranks QB2, on
+    reliability (RB2 is the toy's steadiest player, QB2 its most volatile)
+    widened by the scarcity tilt. This is the composite disagreeing with
+    FFA-068's pure-VORP value_rank, which is the whole point of the module.
 
     position_rank: QB1 1 / QB2 2 / QB3 3; RB1 1 / RB2 2; WR1 1.
     league_percentile = 1 - (rank - 1)/6: 1.0, 5/6, 4/6, 0.5, 2/6, 1/6.
@@ -260,12 +267,12 @@ def test_toy_example_hand_computed_scores_and_ranks() -> None:
     df = _toy_rankings()
 
     expected_scores = {
-        "QB1": 0.615,
-        "QB2": -0.3525,
-        "QB3": -0.6175,
-        "RB1": 1.53,
-        "RB2": -0.3175,
-        "WR1": -0.8575,
+        "QB1": 0.66,
+        "QB2": -0.375,
+        "QB3": -0.565,
+        "RB1": 1.34,
+        "RB2": -0.155,
+        "WR1": -0.905,
     }
     for player_id, score in expected_scores.items():
         assert _get_row(df, player_id)["ranking_score"] == pytest.approx(score), (
@@ -281,7 +288,7 @@ def test_toy_example_hand_computed_scores_and_ranks() -> None:
     )
 
     # The composite is not FFA-068's value_rank: RB2 has zero VORP and still
-    # outranks QB2 (VORP 20) on reliability plus the scarcity tilt.
+    # outranks QB2 (VORP 20) on reliability, widened by the scarcity tilt.
     assert _get_row(df, "RB2")["points_above_replacement"] == pytest.approx(0.0)
     assert _get_row(df, "QB2")["points_above_replacement"] == pytest.approx(20.0)
     assert _get_row(df, "RB2")["ranking_score"] > _get_row(df, "QB2")["ranking_score"]
@@ -405,13 +412,13 @@ def test_missing_cv_drops_the_component_and_renormalizes() -> None:
     assert pd.isna(rbb["cv"])
     assert pd.isna(rbb["z_reliability"])
     assert rbb["components_used"] == 4
-    # Surviving weights 0.40 + 0.25 + 0.10 + 0.10 = 0.85, renormalized:
-    # (0.40*-1 + 0.25*-1 + 0.10*-1 + 0.10*+1) / 0.85 = -0.65 / 0.85
+    # Surviving weights 0.30 + 0.20 + 0.15 + 0.15 = 0.80, renormalized:
+    # (0.30*-1 + 0.20*-1 + 0.15*-1 + 0.15*+1) / 0.80 = -0.50 / 0.80
     assert rbb["z_value"] == pytest.approx(-1.0)
     assert rbb["z_rate"] == pytest.approx(-1.0)
     assert rbb["z_upside"] == pytest.approx(-1.0)
     assert rbb["z_scarcity"] == pytest.approx(1.0)
-    assert rbb["ranking_score"] == pytest.approx(-0.65 / 0.85)
+    assert rbb["ranking_score"] == pytest.approx(-0.50 / 0.80)
 
     # A fully-observed player still uses all five, with no renormalization
     # (the default weights already sum to 1.0).
@@ -419,7 +426,7 @@ def test_missing_cv_drops_the_component_and_renormalizes() -> None:
     assert qba["components_used"] == 5
     assert qba["z_reliability"] == pytest.approx(math.sqrt(1.5))
     assert qba["ranking_score"] == pytest.approx(
-        0.40 * 1.0 + 0.25 * 1.0 + 0.15 * math.sqrt(1.5) + 0.10 * 1.0 + 0.10 * -1.0
+        0.30 * 1.0 + 0.20 * 1.0 + 0.20 * math.sqrt(1.5) + 0.15 * 1.0 + 0.15 * -1.0
     )
 
     # RBa sits exactly at the reliability mean, so his z is 0.0 -- a used
@@ -481,9 +488,9 @@ def _degenerate_rows() -> list[dict]:
         z = +1 (QB1), -1 (RB1).
     Upside: ceilings above replacement {30-20, 30-15} = {10, 15}; mean 12.5;
         pstdev 2.5; z = -1 (QB1), +1 (RB1).
-    Scores over the two surviving weights 0.15 + 0.10 = 0.25:
-        QB1 (0.15*1 + 0.10*-1)/0.25 =  0.05/0.25 =  0.2
-        RB1 (0.15*-1 + 0.10*1)/0.25 = -0.05/0.25 = -0.2
+    Scores over the two surviving weights 0.20 + 0.15 = 0.35:
+        QB1 (0.20*1 + 0.15*-1)/0.35 =  0.05/0.35
+        RB1 (0.20*-1 + 0.15*1)/0.35 = -0.05/0.35
     """
     return [
         _row("QB1", "QB", 20.0, 10, 0.20, 30.0),
@@ -512,8 +519,8 @@ def test_player_with_no_usable_component_scores_nan_and_ranks_nan() -> None:
     assert pd.isna(qb1["z_value"])
     assert pd.isna(qb1["z_rate"])
     assert pd.isna(qb1["z_scarcity"])
-    assert qb1["ranking_score"] == pytest.approx(0.2)
-    assert rb1["ranking_score"] == pytest.approx(-0.2)
+    assert qb1["ranking_score"] == pytest.approx(0.05 / 0.35)
+    assert rb1["ranking_score"] == pytest.approx(-0.05 / 0.35)
     # n_ranked counts only the scored players (2), not WR1.
     assert qb1["league_rank"] == 1.0
     assert qb1["league_percentile"] == pytest.approx(1.0)
@@ -531,10 +538,10 @@ def test_zero_variance_component_is_nan_for_every_player() -> None:
     assert list(df["components_used"]) == [4, 4, 4, 4, 4, 4]
 
     # QB1's other four components are unchanged; the weights renormalize
-    # over 0.40 + 0.25 + 0.10 + 0.10 = 0.85.
+    # over 0.30 + 0.20 + 0.15 + 0.15 = 0.80.
     qb1 = _get_row(df, "QB1")
     assert qb1["ranking_score"] == pytest.approx(
-        (0.40 * 0.5 + 0.25 * 0.5 + 0.10 * 1.4 + 0.10 * 0.0) / 0.85
+        (0.30 * 0.5 + 0.20 * 0.5 + 0.15 * 1.4 + 0.15 * 0.0) / 0.80
     )
 
 
@@ -604,22 +611,50 @@ def test_custom_weights_change_the_ordering() -> None:
 def test_scarcity_weight_zero_recovers_the_untilted_reading() -> None:
     """``scarcity=0.0`` drops the double-counted component entirely.
 
-    In the toy, RB2 (zero VORP, thin position) outranks QB2 (VORP 20) under
-    the defaults. Removing the scarcity tilt flips them back.
+    ``scarcity_ratio`` is a property of the *position*, so removing it
+    shifts whole positions relative to each other rather than reordering
+    players within one. In this toy it does not change the final order at
+    all -- WR1 is last either way -- but it closes most of the gap the tilt
+    had opened: WR1, the only player at a zero-scarcity position
+    (``z_scarcity = -2``), trails QB3 by 0.340 under the defaults and by
+    only 0.047 once the tilt is removed.
+
+    "Level-shifting, not necessarily order-changing" is the honest claim to
+    assert here. An assertion that some specific pair always flips would be
+    over-fitted to this toy's numbers -- under the previous 0.40/0.25 weights
+    exactly one pair (RB2/QB2) flipped, and it did so by 0.065, which is
+    noise-level agreement, not a property of the metric.
     """
     weights = RankingWeights(
-        value=0.40, rate=0.25, reliability=0.15, upside=0.10, scarcity=0.0
+        value=0.30, rate=0.20, reliability=0.20, upside=0.15, scarcity=0.0
     )
     df = _toy_rankings(weights=weights)
 
     assert list(df["components_used"]) == [4, 4, 4, 4, 4, 4]
-    # Surviving weights sum to 0.90 and are renormalized:
-    # QB2 (-0.10 - 0.0625 - 0.21 + 0.02) / 0.90 = -0.3525 / 0.90
-    # RB2 (-0.30 - 0.1875 + 0.21 - 0.14) / 0.90 = -0.4175 / 0.90
-    assert _get_row(df, "QB2")["ranking_score"] == pytest.approx(-0.3525 / 0.90)
-    assert _get_row(df, "RB2")["ranking_score"] == pytest.approx(-0.4175 / 0.90)
-    assert _get_row(df, "QB2")["ranking_score"] > _get_row(df, "RB2")["ranking_score"]
-    assert list(df["sleeper_player_id"]) == ["RB1", "QB1", "QB2", "RB2", "QB3", "WR1"]
+    # Surviving weights sum to 0.85 and are renormalized:
+    #   QB2 (-0.075 - 0.05 - 0.28 + 0.03) / 0.85 = -0.375 / 0.85
+    #   RB2 (-0.225 - 0.15 + 0.28 - 0.21) / 0.85 = -0.305 / 0.85
+    #   QB3 (-0.225 - 0.15 - 0.04 - 0.15) / 0.85 = -0.565 / 0.85
+    #   WR1 (-0.225 - 0.15 - 0.20 - 0.03) / 0.85 = -0.605 / 0.85
+    assert _get_row(df, "QB2")["ranking_score"] == pytest.approx(-0.375 / 0.85)
+    assert _get_row(df, "RB2")["ranking_score"] == pytest.approx(-0.305 / 0.85)
+    assert _get_row(df, "QB3")["ranking_score"] == pytest.approx(-0.565 / 0.85)
+    assert _get_row(df, "WR1")["ranking_score"] == pytest.approx(-0.605 / 0.85)
+    assert list(df["sleeper_player_id"]) == ["RB1", "QB1", "RB2", "QB2", "QB3", "WR1"]
+
+    # WR1's deficit to QB3 collapses once the position-level tilt is gone.
+    tilted = _toy_rankings()
+    tilted_gap = (
+        _get_row(tilted, "QB3")["ranking_score"]
+        - _get_row(tilted, "WR1")["ranking_score"]
+    )
+    untilted_gap = (
+        _get_row(df, "QB3")["ranking_score"] - _get_row(df, "WR1")["ranking_score"]
+    )
+    assert tilted_gap == pytest.approx(0.34)
+    assert untilted_gap == pytest.approx(0.04 / 0.85)
+    assert untilted_gap < tilted_gap
+
     # The z-scores themselves are untouched -- only the blend changed.
     assert _get_row(df, "RB2")["z_scarcity"] == pytest.approx(1.0)
 
@@ -636,7 +671,12 @@ def test_invalid_weights_raise() -> None:
 def test_default_weights_sum_to_one() -> None:
     assert DEFAULT_RANKING_WEIGHTS.total() == pytest.approx(1.0)
     assert DEFAULT_RANKING_WEIGHTS == RankingWeights(
-        value=0.40, rate=0.25, reliability=0.15, upside=0.10, scarcity=0.10
+        value=0.30, rate=0.20, reliability=0.20, upside=0.15, scarcity=0.15
+    )
+    # value + rate is capped at half the blend because the two are two
+    # views of one quantity -- see the module docstring.
+    assert DEFAULT_RANKING_WEIGHTS.value + DEFAULT_RANKING_WEIGHTS.rate == (
+        pytest.approx(0.50)
     )
 
 
@@ -852,5 +892,5 @@ def test_seasons_are_never_pooled() -> None:
         season_df = df.loc[df["season"] == season]
         assert list(season_df["league_rank"]) == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
         assert _get_row(df, "RB1", season=season)["ranking_score"] == pytest.approx(
-            1.53
+            1.34
         )
