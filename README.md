@@ -10,7 +10,7 @@ and the `players/` layer, split across [`docs/players-data.md`](docs/players-dat
 (ingestion: nflverse, scoring, the player-week fact table) and
 [`docs/players-analytics.md`](docs/players-analytics.md) (performance,
 position strength, lineup efficiency, player value, matchup contribution,
-and lineup tendencies).
+lineup tendencies, and the league-wide composite player ranking).
 
 The initial development and validation season is **2025**, using the Sleeper
 username `schneidbaby` as the primary development account. The application is

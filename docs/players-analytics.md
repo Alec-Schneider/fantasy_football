@@ -14,13 +14,14 @@ metrics built on top of the player-week fact table
 [`player_value.py`](../src/fantasy_analyzer/players/player_value.py),
 [`matchup_contribution.py`](../src/fantasy_analyzer/players/matchup_contribution.py),
 [`lineup_tendencies.py`](../src/fantasy_analyzer/players/lineup_tendencies.py),
+[`player_rankings.py`](../src/fantasy_analyzer/players/player_rankings.py),
 and the top-level composition,
 [`player_analytics.py`](../src/fantasy_analyzer/players/player_analytics.py).
 
 Conventions on this page (matching the earlier four):
 
 - Source links point at a specific line in the current `main` (commit
-  `b3115d6` at time of writing). **Line numbers drift as the code
+  `6629f59` at time of writing). **Line numbers drift as the code
   changes** -- if a link looks wrong, search the module for the symbol name
   rather than trusting the anchor.
 - Sleeper IDs (`sleeper_player_id`, `roster_id`) are always the join keys.
@@ -59,9 +60,14 @@ player_week_df  (one row per rostered player, per week)
         +--> lineup_tendencies.py      (FFA-070) what are a manager's
         |        (also needs lineup_efficiency.py)  roster/start-sit habits?
         |
+        +--> player_rankings.py        (FFA-073) one league-wide value
+        |        (needs performance.py, and             ranking across every
+        |         player_value.py internally)           position at once
+        |
         +--> player_analytics.py       (FFA-071) one composed entry point
                  (needs performance.py + player_value.py                  
-                  + position_strength.py + lineup_efficiency.py)
+                  + position_strength.py + lineup_efficiency.py
+                  + player_rankings.py)
 ```
 
 Every function on this page performs **no network access** and operates
@@ -189,7 +195,7 @@ for those two rows, and neither builder invents one -- see
 [`docs/players-data.md`](players-data.md)'s "Identity enrichment order" for
 where a real pipeline would resolve it instead.
 
-**[`PlayerAnalytics`](../src/fantasy_analyzer/players/player_analytics.py#L302)**
+**[`PlayerAnalytics`](../src/fantasy_analyzer/players/player_analytics.py#L309)**
 -- frozen dataclass over `player_week_df` + `roster_positions` + `num_teams`
 (`Optional[int]`, since `LeagueSettings.total_rosters` is optional) + two
 boom/bust threshold fields
@@ -203,7 +209,7 @@ the shape AGENTS.md's ticket text specifies for this service, unlike
 construction (the same eager-caching pattern `LeagueAnalytics` uses for
 `weekly_scoring_ranks_df`); every other attribute is a **lazy, per-access**
 recompute -- reading `analytics.position_summary_df` twice does the work
-twice. Fourteen attributes total, one per output of every module it
+twice. Fifteen attributes total, one per output of every module it
 composes:
 
 | Attribute | Source | Grain |
@@ -215,6 +221,7 @@ composes:
 | `lineup_efficiency_df` | `lineup_efficiency.py`, FFA-067 | `(season, week, roster_id)` |
 | `player_value_df` | `player_value.py`, FFA-068 (from `player_season_df`) | `(season, sleeper_player_id)` |
 | `position_scarcity_df` | `player_value.py`, FFA-068 (from `player_season_df`) | `(season, position)` |
+| `player_ranking_df` | `player_rankings.py`, FFA-073 (from `player_season_df`) | `(season, sleeper_player_id)` |
 | `roster_construction_df` | `lineup_tendencies.py`, FFA-070 | `(season, fantasy_team, position)` |
 | `bench_allocation_df` | `lineup_tendencies.py`, FFA-070 | `(season, fantasy_team, position)` |
 | `flex_usage_df` | `lineup_tendencies.py`, FFA-070 | `(season, fantasy_team, position)` |
@@ -271,9 +278,9 @@ player_contribution_df requires season_matchup_df, which was not provided; pass 
 Hand-checked: each team carried exactly one QB and one RB for the same number
 of weeks, so every `roster_share` is `0.5`.
 
-[`PlayerAnalytics`](../src/fantasy_analyzer/players/player_analytics.py#L302)
+[`PlayerAnalytics`](../src/fantasy_analyzer/players/player_analytics.py#L309)
 /
-[`build_player_analytics(player_week_df, roster_positions, num_teams, player_boom_bust_threshold=..., position_boom_bust_threshold=..., season_matchup_df=None) -> PlayerAnalytics`](../src/fantasy_analyzer/players/player_analytics.py#L604)
+[`build_player_analytics(player_week_df, roster_positions, num_teams, player_boom_bust_threshold=..., position_boom_bust_threshold=..., season_matchup_df=None, ranking_weights=..., rate_shrinkage_games=...) -> PlayerAnalytics`](../src/fantasy_analyzer/players/player_analytics.py#L653)
 ([module docstring](../src/fantasy_analyzer/players/player_analytics.py#L1)).
 
 ## Reference
@@ -941,7 +948,7 @@ Module:
 Five functions, all grouped by `(season, fantasy_team, position)` except
 the fourth (which wraps `lineup_efficiency.py`'s own `(season, roster_id)`
 grain). All five are also available as
-[`PlayerAnalytics`](../src/fantasy_analyzer/players/player_analytics.py#L302)
+[`PlayerAnalytics`](../src/fantasy_analyzer/players/player_analytics.py#L309)
 attributes -- `roster_construction_df`, `bench_allocation_df`,
 `flex_usage_df`, `start_sit_tendency_df`, `positional_preference_df` -- which
 need no constructor argument beyond the ones that service already takes:
@@ -1073,3 +1080,182 @@ These numbers reproduce the module docstring's own hand-checked toy
 examples exactly: `roster_share` of `0.6`/`0.4` for RB/WR (`3` and `2`
 player-weeks out of `5` total), and `flex_starts`/`flex_start_share` tied
 at `1`/`0.5` for RB and WR, both at `flex_usage_rank = 1`.
+
+---
+
+### League-wide composite player ranking (FFA-073)
+
+**Answers:** "if I had to rank every player in the league on one list --
+across positions, on more than raw points -- what would that list be?"
+
+Module:
+[`player_rankings.py`](../src/fantasy_analyzer/players/player_rankings.py)
+([module docstring](../src/fantasy_analyzer/players/player_rankings.py#L1)).
+Consumes `performance.py`'s output plus a league's `roster_positions` and
+`num_teams`, and calls `player_value.py`'s two builders internally -- it
+**recomputes no replacement level, VORP, field size, `cv` or
+`scoring_ceiling`**.
+
+**Why this exists next to FFA-068's `value_rank`.** That column is already
+a league-wide, cross-position ranking, but on a single signal: season
+`points_above_replacement`. That makes it purely volume-driven -- a
+seventeen-game compiler outranks a nine-game elite producer, a metronome
+and a boom/bust player with equal totals tie, and a two-game sample is
+unregularized. This module keeps that VORP spine and blends four more
+signals onto it.
+
+**The composite.** Five components, each z-scored **within a season across
+all positions** using the population standard deviation (`ddof = 0`,
+matching `consistency.py` and `performance.py`):
+
+| Component | Definition | Weight field | Default |
+|---|---|---|---|
+| `z_value` | `z(points_above_replacement)` | `value` | 0.30 |
+| `z_rate` | `z(shrunk_ppg_above_replacement)` | `rate` | 0.20 |
+| `z_reliability` | `z(-cv)` -- lower volatility ranks higher | `reliability` | 0.20 |
+| `z_upside` | `z(scoring_ceiling - replacement_ppg)` | `upside` | 0.15 |
+| `z_scarcity` | `z(scarcity_ratio)`, broadcast from the position's row | `scarcity` | 0.15 |
+
+`ranking_score = sum(w_c * z_c) / sum(w_c)` over the components available
+for that player. **Cross-position pooling is legal** because four of the
+five are already replacement-relative (they subtract the position's own
+baseline before pooling) and the fifth, `cv`, is normalized by the player's
+own scoring level. The module never pools raw `points_per_game` across
+positions.
+
+**Small-sample shrinkage.** `shrunk_ppg_above_replacement = n *
+ppg_above_replacement / (n + k)`, with `n = games_played` and `k =
+rate_shrinkage_games` (default
+[`DEFAULT_RATE_SHRINKAGE_GAMES`](../src/fantasy_analyzer/players/player_rankings.py#L510)
+`= 4.0`). This shrinks toward **zero, i.e. toward replacement level** --
+the right prior for a player barely observed -- so a two-game, `+10.0`
+ppg-above-replacement flash lands at `2*10/(2+4) = 3.33`, not `10.0`.
+`k = 0` degenerates to the raw rate exactly. This replaces an arbitrary
+`min_games` cutoff: no player is excluded, but a tiny sample cannot
+dominate.
+
+**Missing components are dropped, never zero-filled.** `cv` is `NaN` below
+two games, `scarcity_ratio` is `NaN` when `replacement_ppg <= 0`, and a
+component whose pool has zero variance (or fewer than two usable values) is
+`NaN` for *every* player that season rather than `inf`. In each case the
+component is dropped for that player and **the surviving weights are
+renormalized to sum to 1.0**; `components_used` reports how many of the
+five actually entered the score. Zero-filling was rejected deliberately:
+`0.0` on a z-scale means "exactly league average", which would silently
+assert a measurement nobody made. A player with no usable component gets
+`NaN` for `ranking_score` and all three rank columns, and sorts last.
+
+**Ranks.** `league_rank` is a standard competition ("1224") rank on
+descending `ranking_score` within the season -- the same convention as
+`standings.py`'s `scoring_rank` and `player_value.py`'s `value_rank`, with
+ties compared after rounding to 6 decimal places and display order broken
+by ascending `sleeper_player_id`. `position_rank` applies the same rule
+within `(season, position)`. `league_percentile` is
+`1 - (league_rank - 1) / n_ranked`, where `n_ranked` counts only scored
+players. All three are `float64`, not `int64` (unlike `value_rank`), because
+an unscoreable player's rank is `NaN`.
+
+**Scarcity is deliberately double-counted -- read this before using the
+default.** Subtracting `replacement_ppg` already prices positional
+thinness once; that is the entire reason a TE at 12 ppg against a 4 ppg TE
+baseline can outrank a QB at 22 against 20. `z_scarcity` then prices the
+same thinness a **second** time. Because `scarcity_ratio` is a property of
+the *position*, this lifts every player at a thin position -- including its
+replacement-level ones -- not just the elite ones (visible in the example
+below, where a zero-VORP `TE Deep` outranks `QB Volatile`, who banked 8
+points above replacement). That is a deliberate opinion about
+**draft-capital value**, not a pure measure of realized points.
+`RankingWeights(scarcity=0.0)` recovers the undistorted
+replacement-relative reading.
+
+**`value` and `rate` are not independent**, and their combined weight is
+capped at 0.50 for that reason:
+`points_above_replacement == games_played * ppg_above_replacement` for
+every frame `performance.py` produces, so the two z-scores are two views of
+one quantity and are **exactly equal** whenever `games_played` is constant
+across the pool. Shrinkage is the only thing that separates them.
+
+**Two modes.** `mode="retrospective"` (the default) is everything above.
+`mode="projected"` is a signature seam only -- it raises
+`NotImplementedError` pending a real
+[FFA-072](players-data.md) projection provider; the docstring specifies
+what it will do (aggregate `ProjectionProvider.projections(season, week)`
+into projected season totals, then run the identical pipeline). Any other
+`mode` raises `ValueError`, as does a negative `rate_shrinkage_games`, a
+negative or `NaN` weight, an all-zero weight vector, a `performance_df`
+missing a required column, or duplicate `(season, sleeper_player_id)` rows.
+
+**[`build_league_player_rankings(performance_df, roster_positions, num_teams, *, mode="retrospective", weights=..., rate_shrinkage_games=..., projections_df=None) -> pd.DataFrame`](../src/fantasy_analyzer/players/player_rankings.py#L841)**
+returns [`LEAGUE_PLAYER_RANKING_COLUMNS`](../src/fantasy_analyzer/players/player_rankings.py#L474).
+Weights are a frozen
+[`RankingWeights`](../src/fantasy_analyzer/players/player_rankings.py#L562)
+dataclass; the defaults are
+[`DEFAULT_RANKING_WEIGHTS`](../src/fantasy_analyzer/players/player_rankings.py#L638).
+Also reachable as `PlayerAnalytics.player_ranking_df`.
+
+```python
+import pandas as pd
+from fantasy_analyzer.players.performance import PLAYER_PERFORMANCE_COLUMNS
+from fantasy_analyzer.players.player_rankings import build_league_player_rankings
+
+def row(pid, name, pos, team, ppg, cv, ceiling, g=4):
+    return {"season": 2025, "sleeper_player_id": pid, "player_name": name,
+            "position": pos, "nfl_team": team, "games_played": g,
+            "total_points": ppg * g, "points_per_game": ppg,
+            "median_points": ppg, "stdev_points": cv * ppg, "cv": cv,
+            "scoring_floor": 0.0, "scoring_ceiling": ceiling,
+            "boom_games": 0, "boom_pct": 0.0, "bust_games": 0, "bust_pct": 0.0}
+
+# A 2-team league starting 1 QB / 1 RB / 1 TE -- starter cutoff = 2 per
+# position, so each position's 2nd-best player is its replacement level.
+rows = [
+    row("1", "QB Volatile", "QB", "BUF", 22.0, 0.60, 40.0),
+    row("2", "QB Steady",   "QB", "KC",  20.0, 0.10, 23.0),
+    row("3", "QB Backup",   "QB", "NYJ", 14.0, 0.30, 18.0),
+    row("4", "RB Elite",    "RB", "SF",  18.0, 0.20, 25.0),
+    row("5", "RB Mid",      "RB", "DAL", 10.0, 0.40, 16.0),
+    row("6", "RB Deep",     "RB", "SEA",  8.0, 0.50, 12.0),
+    row("7", "TE Scarce",   "TE", "BAL", 12.0, 0.25, 20.0),
+    row("8", "TE Deep",     "TE", "CHI",  4.0, 0.45,  7.0),
+]
+performance_df = pd.DataFrame(rows, columns=PLAYER_PERFORMANCE_COLUMNS)
+
+ranked = build_league_player_rankings(performance_df, ["QB", "RB", "TE", "BN"], 2)
+print(ranked[["player_name", "position", "points_above_replacement", "scarcity_ratio",
+              "z_value", "z_reliability", "z_upside", "z_scarcity",
+              "components_used", "ranking_score", "league_rank",
+              "position_rank"]].to_string(index=False))
+```
+
+**Verified offline** -- real output:
+
+```text
+player_name position  points_above_replacement  scarcity_ratio   z_value  z_reliability  z_upside  z_scarcity  components_used  ranking_score  league_rank  position_rank
+  TE Scarce       TE                      32.0             2.0  1.511710       0.640513  1.087115    1.578540                5       1.283806          1.0            1.0
+   RB Elite       RB                      32.0             0.8  1.511710       0.960769  0.953316   -0.050921                5       1.083368          2.0            1.0
+  QB Steady       QB                       0.0             0.1 -0.279946       1.601282 -0.652269   -1.001439                5      -0.067773          3.0            1.0
+    TE Deep       TE                       0.0             2.0 -0.279946      -0.640513 -0.652269    1.578540                5      -0.129135          4.0            2.0
+QB Volatile       QB                       8.0             0.1  0.167968      -1.601282  1.622309   -1.001439                5      -0.143142          5.0            2.0
+     RB Mid       RB                       0.0             0.8 -0.279946      -0.320256 -0.250873   -0.050921                5      -0.249293          6.0            2.0
+    RB Deep       RB                      -8.0             0.8 -0.727860      -0.960769 -0.786067   -0.050921                5      -0.681632          7.0            3.0
+  QB Backup       QB                     -24.0             0.1 -1.623688       0.320256 -1.321262   -1.001439                5      -1.096198          8.0            3.0
+```
+
+Hand-checked. Replacement level is each position's 2nd-best `points_per_game`
+(QB `20.0`, RB `10.0`, TE `4.0`), so `TE Scarce`'s
+`points_above_replacement = 48 - 4.0*4 = 32.0` -- **identical to `RB Elite`'s**
+`72 - 10.0*4 = 32.0`, and the two tie on `z_value` accordingly. `scarcity_ratio`
+is `(12-4)/4 = 2.0` at TE against `(18-10)/10 = 0.8` at RB, and that is what
+separates them: the ratio pool is `{0.1, 0.1, 0.1, 0.8, 0.8, 0.8, 2.0, 2.0}`,
+mean `6.7/8 = 0.8375`, population stdev `0.736440`, so
+`z_scarcity(TE) = (2.0 - 0.8375)/0.736440 = 1.578540`. Note also that all
+eight players have `games_played = 4`, so `z_rate == z_value` exactly here
+(see "value and rate are not independent" above) -- it is omitted from the
+printed columns for that reason.
+
+Two things this output shows that FFA-068's `value_rank` cannot: `TE Scarce`
+outranks `RB Elite` despite identical VORP (the scarcity tilt), and
+`QB Steady` (VORP `0.0`) outranks `QB Volatile` (VORP `8.0`) on reliability
+and consistency of floor. Whether you want either of those is exactly what
+the weights are for.
+

@@ -443,6 +443,7 @@ Analytics tickets must additionally satisfy:
 - **FFA-072** — Projection and Ranking Provider Interface — DONE (`7d314af`) — see PROGRESS.md
 - **FFA-069** — Matchup Player Contribution Analysis — DONE (`3289bb0`) — see PROGRESS.md
 - **FFA-070** — Manager Lineup Tendencies — DONE (`1d6b98b`) — see PROGRESS.md
+- **FFA-073** — League-Wide Composite Player Value Ranking — DONE (`570429b`, rebalanced `32dbcaa`, wired `6629f59`) — see PROGRESS.md
 
 ---
 
@@ -480,7 +481,7 @@ V1 should answer:
 Tickets:
 
 ```text
-FFA-060 through FFA-072
+FFA-060 through FFA-073
 ```
 
 Adds:
@@ -491,6 +492,7 @@ Adds:
 - player value
 - matchup player contributions
 - manager tendencies
+- league-wide composite player ranking
 - future projection-provider support
 
 ---
@@ -598,7 +600,7 @@ None.
 
 ## DONE
 
-FFA-001 through FFA-057, FFA-060 through FFA-072 — see PROGRESS.md.
+FFA-001 through FFA-057, FFA-060 through FFA-073 — see PROGRESS.md.
 
 ---
 
