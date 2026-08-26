@@ -42,11 +42,26 @@ from fantasy_analyzer.players.nflverse_cache import (
     refresh_player_stats_cache,
 )
 from fantasy_analyzer.players.nflverse_client import NflverseClient
+from fantasy_analyzer.players.nflverse_defense import (
+    TEAM_CODE_ALIASES,
+    TEAM_DEFENSE_RAW_STAT_COLUMNS,
+    NflverseTeamDefenseProvider,
+    build_team_defense_stats,
+)
 from fantasy_analyzer.players.nflverse_provider import (
     RAW_STAT_COLUMNS,
     NflverseWeeklyStatsProvider,
     normalize_player_stats,
 )
+from fantasy_analyzer.players.nflverse_schedule_cache import (
+    DEFAULT_CACHE_DIR as NFLVERSE_SCHEDULE_DEFAULT_CACHE_DIR,
+)
+from fantasy_analyzer.players.nflverse_schedule_cache import (
+    get_games_cached,
+    load_games_cache,
+    refresh_games_cache,
+)
+from fantasy_analyzer.players.nflverse_schedule_client import NflverseScheduleClient
 from fantasy_analyzer.players.performance import (
     BOOM_BUST_THRESHOLD_STDEVS as PLAYER_BOOM_BUST_THRESHOLD_STDEVS,
 )
@@ -70,6 +85,11 @@ from fantasy_analyzer.players.player_week import (
     PLAYER_WEEK_COLUMNS,
     PlayerWeekFactTable,
     build_player_week_fact_table,
+)
+from fantasy_analyzer.players.points_allowed import (
+    POINTS_ALLOWED_COLUMNS,
+    NflverseScheduleProvider,
+    normalize_points_allowed,
 )
 from fantasy_analyzer.players.position_strength import (
     BOOM_BUST_THRESHOLD_STDEVS as POSITION_BOOM_BUST_THRESHOLD_STDEVS,
@@ -121,6 +141,18 @@ __all__ = [
     "PLAYER_WEEK_COLUMNS",
     "PlayerWeekFactTable",
     "build_player_week_fact_table",
+    "NflverseScheduleClient",
+    "NFLVERSE_SCHEDULE_DEFAULT_CACHE_DIR",
+    "load_games_cache",
+    "refresh_games_cache",
+    "get_games_cached",
+    "NflverseScheduleProvider",
+    "POINTS_ALLOWED_COLUMNS",
+    "normalize_points_allowed",
+    "NflverseTeamDefenseProvider",
+    "TEAM_CODE_ALIASES",
+    "TEAM_DEFENSE_RAW_STAT_COLUMNS",
+    "build_team_defense_stats",
     "PLAYER_PERFORMANCE_COLUMNS",
     "PLAYER_BOOM_BUST_THRESHOLD_STDEVS",
     "MIN_GAMES_FOR_DISPERSION",

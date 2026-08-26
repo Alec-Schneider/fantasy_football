@@ -30,9 +30,7 @@ def _gzipped_fixture(path: Path) -> bytes:
 
 
 def _mock_url(m: requests_mock_lib.Mocker, **kwargs) -> None:
-    m.get(
-        NflverseClient.STATS_PLAYER_WEEK_URL_TEMPLATE.format(season=SEASON), **kwargs
-    )
+    m.get(NflverseClient.STATS_PLAYER_WEEK_URL_TEMPLATE.format(season=SEASON), **kwargs)
 
 
 def test_load_player_stats_cache_returns_none_when_missing(tmp_path: Path) -> None:

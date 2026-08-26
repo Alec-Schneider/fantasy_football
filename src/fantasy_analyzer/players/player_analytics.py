@@ -1,6 +1,6 @@
 """Compose Epic 7's player and positional analytics into one interface (FFA-071).
 
-This module is pure composition: it wires FFA-064 through FFA-068's
+This module is pure composition: it wires FFA-064 through FFA-070's
 already-built, already-documented builders into the ergonomic
 ``analysis.player_weekly_df`` / ``analysis.player_season_df`` /
 ``analysis.position_summary_df`` / ``analysis.roster_efficiency_df`` /
@@ -14,9 +14,10 @@ functions, and a ``build_*`` factory.
 It performs no network access and defines **no new metrics**. Every number it
 returns is copied verbatim from one of the modules below; see
 ``players/player_week.py``, ``players/performance.py``,
-``players/position_strength.py``, ``players/lineup_efficiency.py``, and
-``players/player_value.py`` for every metric definition and edge-case rule
-this module inherits unchanged.
+``players/position_strength.py``, ``players/lineup_efficiency.py``,
+``players/player_value.py``, ``players/matchup_contribution.py``, and
+``players/lineup_tendencies.py`` for every metric definition and edge-case
+rule this module inherits unchanged.
 
 It lives in ``players/`` rather than ``analytics/`` because every builder it
 composes does, and because AGENTS.md assigns "positional analysis and roster
@@ -54,6 +55,31 @@ A :class:`~fantasy_analyzer.league.snapshot.LeagueSnapshot` is deliberately
 these two scalars are all the composed builders need, so requiring a snapshot
 would drag league normalization into a composition layer AGENTS.md wants kept
 separate from data access.
+
+One further input is data rather than league structure, and is optional:
+
+- ``season_matchup_df`` -- FFA-033's normalized matchup frame, i.e.
+  :func:`~fantasy_analyzer.matchups.season_matchups.build_season_matchup_df`'s
+  output. Only FFA-069's two frames
+  (:attr:`~PlayerAnalytics.player_contribution_df` and
+  :attr:`~PlayerAnalytics.positional_advantage_df`) read it; the other twelve
+  never touch it. It therefore defaults to ``None``, following ``num_teams``'
+  precedent for an optional constructor field, so that every caller who only
+  wants player/position frames can still build this service from a fact table
+  alone -- and so that every call site written before it existed stays valid.
+  For the same reason it is declared **last**, after the two threshold
+  fields: inserting it earlier would silently re-bind an existing positional
+  call.
+
+When ``season_matchup_df`` is ``None``, reading either FFA-069 frame raises
+``ValueError`` naming the missing input. Returning an empty frame instead
+would be worse than useless here: an empty frame is exactly what those
+builders legitimately return when no roster-week qualifies, so a caller who
+simply forgot the argument would get a plausible-looking "no contributions"
+answer rather than an error. Nothing is partially computed either -- FFA-069
+takes the recorded score, opponent, and result from ``season_matchup_df`` and
+never recomputes them from ``player_week_df``, so without it there is no
+subset of those columns this module could honestly fill in.
 
 Attributes, not methods
 -------------------------
@@ -110,8 +136,8 @@ use case, and the dataclass is frozen -- the fix is to build a new
 Which frames are exposed
 ---------------------------
 
-FFA-071's ticket text lists five frames; this module exposes seven, adding
-the second output of the two dependencies that produce two:
+FFA-071's ticket text lists five frames; this module exposes fourteen --
+one per output of every dependency it composes:
 
 - ``player_weekly_df`` -- FFA-064's fact table, unchanged.
 - ``player_season_df`` -- FFA-065's per-player-season performance table.
@@ -131,11 +157,39 @@ The last two extras follow ``league_analytics.py``'s precedent for including
 dependency unreachable would make the composition layer incomplete relative
 to its own dependency list.
 
-**Not exposed (yet):** FFA-069 (matchup player contribution) and FFA-070
-(manager lineup tendencies) are listed as FFA-071 dependencies but are still
-BACKLOG, so the frames they would produce do not exist. No placeholder
-attribute is defined for them; when those tickets land, each adds one more
-accessor here in exactly the same shape as the others.
+FFA-069 (matchup player contribution) and FFA-070 (manager lineup
+tendencies), the two remaining FFA-071 dependencies, have since shipped, and
+each of their frames is one more accessor in exactly the same shape as the
+others. FFA-070's five need nothing this class did not already hold:
+
+- ``roster_construction_df`` -- per-``(season, fantasy_team, position)``
+  distinct players, rostered player-weeks, and roster share.
+- ``bench_allocation_df`` -- per-``(season, fantasy_team, position)`` benched
+  player-weeks and bench share.
+- ``flex_usage_df`` -- per-``(season, fantasy_team, position)`` FLEX-slot
+  usage in the manager's actual lineup, from ``roster_positions``.
+- ``start_sit_tendency_df`` -- per-``(season, roster_id)`` start/sit rates;
+  FFA-067's roster-efficiency table plus two per-week rates. Grouped by
+  ``roster_id``, not ``fantasy_team``, inherited from the wrapped function.
+- ``positional_preference_df`` -- per-``(season, fantasy_team, position)``
+  rollup of the rostered/started/benched views.
+
+FFA-069's two need ``season_matchup_df`` and raise ``ValueError`` without it
+(see the inputs section above):
+
+- ``player_contribution_df`` -- one row per started player per roster-week of
+  a paired matchup: his points, his share of his roster's recorded score, the
+  matchup context, and his rank among that roster's starters.
+- ``positional_advantage_df`` -- one row per ``(season, week, roster_id,
+  position)``, comparing each side's started production at that position.
+
+``matchup_contribution.py``'s third function, ``reconcile_matchup_points``,
+is deliberately **not** exposed. It is a data-quality check -- do Sleeper's
+recorded scores agree with this codebase's re-derived ones -- rather than an
+analytics frame, and it belongs with the fact-table build step (whose
+``unsupported_scoring_keys`` is the other half of the same question), not
+alongside frames a caller reads to answer a league question. Callers who want
+it hold both of its inputs already and call it directly.
 
 Regular season vs. playoffs, and one league-season at a time
 ---------------------------------------------------------------
@@ -147,10 +201,17 @@ module's own "Regular season vs. playoffs" section) -- so a caller wanting a
 phase-specific view must filter ``player_week_df`` on ``week`` against the
 league's playoff-start boundary (FFA-022,
 ``LeagueSettings.playoff_week_start``) **before** constructing a
-:class:`PlayerAnalytics`, and build a separate instance per phase. Filtering
-here instead would be strictly worse: ``player_season_df`` is computed at
-construction and feeds the value frames, so a per-attribute phase flag could
-silently mix a full-season replacement baseline with a playoffs-only player.
+:class:`PlayerAnalytics`, and build a separate instance per phase.
+``season_matchup_df`` *does* carry ``is_playoff`` (FFA-069 copies it onto
+every output row), but this module still applies no filter to it: a caller
+wanting a phase-specific FFA-069 view must filter both input frames on the
+same boundary, since filtering only one would compare a full-season lineup
+against a playoffs-only matchup set.
+
+Filtering here instead would be strictly worse: ``player_season_df`` is
+computed at construction and feeds the value frames, so a per-attribute phase
+flag could silently mix a full-season replacement baseline with a
+playoffs-only player.
 
 For the same reason as ``player_value.py``, an instance is expected to cover
 **one league-season**: seasons are never pooled by any builder (each groups
@@ -171,6 +232,15 @@ none of its own:
   empty, correctly-shaped frame -- see each ``build_*`` function's own
   "empty input" behavior. Note ``player_weekly_df`` returns the caller's
   empty frame as-is, whatever columns it happens to carry.
+- **Empty ``season_matchup_df``**: an *empty* frame is a legitimate input,
+  not a missing one -- FFA-069's builders return their own empty,
+  correctly-shaped frames for it, and no ``ValueError`` is raised. Only
+  ``None`` (the field never supplied) raises; see below.
+- **Missing ``season_matchup_df``**: :attr:`~PlayerAnalytics.player_contribution_df`
+  and :attr:`~PlayerAnalytics.positional_advantage_df` raise ``ValueError``
+  when it is ``None``. Every other frame, including all five FFA-070
+  tendencies, is unaffected and works exactly as it does when the field is
+  supplied.
 - **Rostered-only row universe**: FFA-064 builds rows from Sleeper's weekly
   rosters, so free agents are absent and FFA-068's replacement baseline is
   computed from rostered players only -- see ``player_value.py``'s
@@ -184,7 +254,9 @@ none of its own:
 - **Contract violations propagate unchanged**: a negative boom/bust
   threshold, and the ``ValueError`` ``player_value.py`` raises for duplicate
   ``(season, sleeper_player_id)`` rows or a missing required column, are
-  raised by the underlying builder, not caught here.
+  raised by the underlying builder, not caught here. The missing-input
+  ``ValueError`` above is the one error this module raises itself, and it is
+  a wiring error rather than a data error.
 """
 
 from __future__ import annotations
@@ -197,6 +269,17 @@ import pandas as pd
 from fantasy_analyzer.players.lineup_efficiency import (
     build_lineup_efficiency_metrics,
     build_roster_efficiency_metrics,
+)
+from fantasy_analyzer.players.lineup_tendencies import (
+    build_bench_allocation_metrics,
+    build_flex_usage_metrics,
+    build_positional_preference_metrics,
+    build_roster_construction_metrics,
+    build_start_sit_tendency_metrics,
+)
+from fantasy_analyzer.players.matchup_contribution import (
+    build_matchup_player_contributions,
+    build_positional_matchup_advantage,
 )
 from fantasy_analyzer.players.performance import (
     BOOM_BUST_THRESHOLD_STDEVS as PLAYER_BOOM_BUST_THRESHOLD_STDEVS,
@@ -225,10 +308,12 @@ class PlayerAnalytics:
     ``analysis.player_weekly_df`` / ``analysis.player_season_df`` /
     ``analysis.position_summary_df`` / ``analysis.roster_efficiency_df`` /
     ``analysis.player_value_df`` entrypoints AGENTS.md describes for Epic 7,
-    backed entirely by FFA-064 through FFA-068. See the module docstring for
+    backed entirely by FFA-064 through FFA-070. See the module docstring for
     the input rationale, why the frames are attributes rather than methods,
-    the eager/lazy split, the two extra frames exposed beyond the ticket's
-    list (and the FFA-069/FFA-070 frames not yet exposed), and the
+    the eager/lazy split, the extra frames exposed beyond the ticket's list
+    (FFA-070's five tendencies, FFA-069's two matchup frames -- which require
+    the optional ``season_matchup_df`` and raise ``ValueError`` without it --
+    and the second output of each FFA-067/FFA-068 pair), and the
     phase-agnostic, one-league-season scope inherited from its inputs.
 
     Attributes:
@@ -253,6 +338,14 @@ class PlayerAnalytics:
             standard deviations, for :attr:`position_summary_df`'s boom/bust
             columns. Defaults to
             :data:`~fantasy_analyzer.players.position_strength.BOOM_BUST_THRESHOLD_STDEVS`.
+        season_matchup_df: FFA-033's
+            :data:`~fantasy_analyzer.matchups.season_matchups.SEASON_MATCHUP_COLUMNS`-shaped
+            frame for the same league-season and phase, as produced by
+            :func:`~fantasy_analyzer.matchups.season_matchups.build_season_matchup_df`.
+            Optional, and declared last so existing positional calls keep
+            working. Only :attr:`player_contribution_df` and
+            :attr:`positional_advantage_df` read it, and only they raise when
+            it is ``None``.
         player_season_df: FFA-065's full
             :data:`~fantasy_analyzer.players.performance.PLAYER_PERFORMANCE_COLUMNS`
             table, computed once at construction. See :attr:`player_value_df`
@@ -269,6 +362,7 @@ class PlayerAnalytics:
     num_teams: Optional[int]
     player_boom_bust_threshold: float = PLAYER_BOOM_BUST_THRESHOLD_STDEVS
     position_boom_bust_threshold: float = POSITION_BOOM_BUST_THRESHOLD_STDEVS
+    season_matchup_df: Optional[pd.DataFrame] = None
     player_season_df: pd.DataFrame = field(init=False)
 
     def __post_init__(self) -> None:
@@ -377,6 +471,135 @@ class PlayerAnalytics:
             self.player_season_df, self.roster_positions, self.num_teams
         )
 
+    @property
+    def roster_construction_df(self) -> pd.DataFrame:
+        """Return per-team, per-position roster construction metrics (FFA-070).
+
+        Thin passthrough to
+        :func:`~fantasy_analyzer.players.lineup_tendencies.build_roster_construction_metrics`
+        over ``player_week_df``. Rebuilt on every access -- see the module
+        docstring's caching section. See ``lineup_tendencies.py`` for the
+        definitions of ``distinct_players``, ``rostered_player_weeks`` and
+        ``roster_share``, and for why a stash who never played still counts.
+        """
+        return build_roster_construction_metrics(self.player_week_df)
+
+    @property
+    def bench_allocation_df(self) -> pd.DataFrame:
+        """Return per-team, per-position bench allocation metrics (FFA-070).
+
+        Thin passthrough to
+        :func:`~fantasy_analyzer.players.lineup_tendencies.build_bench_allocation_metrics`
+        over ``player_week_df``. See ``lineup_tendencies.py`` for the
+        ``bench_weeks``/``bench_share`` definitions and why a position the
+        team never benched gets no row at all.
+        """
+        return build_bench_allocation_metrics(self.player_week_df)
+
+    @property
+    def flex_usage_df(self) -> pd.DataFrame:
+        """Return per-team, per-position FLEX-slot usage metrics (FFA-070).
+
+        Thin passthrough to
+        :func:`~fantasy_analyzer.players.lineup_tendencies.build_flex_usage_metrics`
+        over ``player_week_df``/``roster_positions``. See
+        ``lineup_tendencies.py`` for the closed-form ``flex_starts`` formula,
+        which slot names count as FLEX-type, the ``flex_usage_rank`` tie
+        convention, and why a league with no FLEX-type slot yields an empty
+        frame rather than an error.
+        """
+        return build_flex_usage_metrics(self.player_week_df, self.roster_positions)
+
+    @property
+    def start_sit_tendency_df(self) -> pd.DataFrame:
+        """Return per-roster-season start/sit tendency metrics (FFA-070).
+
+        Thin passthrough to
+        :func:`~fantasy_analyzer.players.lineup_tendencies.build_start_sit_tendency_metrics`
+        over ``player_week_df``/``roster_positions``. Grouped by ``(season,
+        roster_id)``, not ``fantasy_team``, because it wraps FFA-067's
+        :attr:`roster_efficiency_df` unchanged and adds two per-week rates
+        -- so it rebuilds that frame rather than reusing this class's
+        accessor, for the reason :attr:`roster_efficiency_df` documents. See
+        ``lineup_tendencies.py`` for the two rate definitions.
+        """
+        return build_start_sit_tendency_metrics(
+            self.player_week_df, self.roster_positions
+        )
+
+    @property
+    def positional_preference_df(self) -> pd.DataFrame:
+        """Return per-team, per-position preference rollup metrics (FFA-070).
+
+        Thin passthrough to
+        :func:`~fantasy_analyzer.players.lineup_tendencies.build_positional_preference_metrics`
+        over ``player_week_df``. A rollup of the rostered, started and
+        benched views onto one row per position a team ever carried -- see
+        ``lineup_tendencies.py`` for the share definitions and why it is one
+        shared accumulation rather than a merge of the other frames.
+        """
+        return build_positional_preference_metrics(self.player_week_df)
+
+    @property
+    def player_contribution_df(self) -> pd.DataFrame:
+        """Return per-started-player matchup contribution metrics (FFA-069).
+
+        Thin passthrough to
+        :func:`~fantasy_analyzer.players.matchup_contribution.build_matchup_player_contributions`
+        over ``season_matchup_df``/``player_week_df``. See
+        ``matchup_contribution.py`` for the started-players-in-paired-matchups
+        row universe, why ``team_points``/``margin``/``result`` are taken from
+        ``season_matchup_df`` rather than recomputed, the signed-margin
+        convention, and the ``contribution_rank`` tie rule.
+
+        Raises:
+            ValueError: If this service was built without a
+                ``season_matchup_df``. Nothing is returned in its place; see
+                the module docstring's inputs section.
+        """
+        return build_matchup_player_contributions(
+            self._require_season_matchup_df("player_contribution_df"),
+            self.player_week_df,
+        )
+
+    @property
+    def positional_advantage_df(self) -> pd.DataFrame:
+        """Return per-roster-week, per-position matchup advantage metrics (FFA-069).
+
+        Thin passthrough to
+        :func:`~fantasy_analyzer.players.matchup_contribution.build_positional_matchup_advantage`
+        over ``season_matchup_df``/``player_week_df``. See
+        ``matchup_contribution.py`` for the ``positional_advantage``
+        definition, why the row set is the union of positions started by
+        either side, and the FLEX-attribution scope limit.
+        ``matchup_contribution.py``'s third function,
+        ``reconcile_matchup_points``, is intentionally not exposed here --
+        see the module docstring's "Which frames are exposed".
+
+        Raises:
+            ValueError: If this service was built without a
+                ``season_matchup_df``.
+        """
+        return build_positional_matchup_advantage(
+            self._require_season_matchup_df("positional_advantage_df"),
+            self.player_week_df,
+        )
+
+    def _require_season_matchup_df(self, attribute: str) -> pd.DataFrame:
+        """Return ``season_matchup_df``, or raise naming the missing input.
+
+        An empty frame is a valid input and is returned as-is; only ``None``
+        -- the field never supplied -- raises.
+        """
+        if self.season_matchup_df is None:
+            raise ValueError(
+                f"{attribute} requires season_matchup_df, which was not "
+                "provided; pass season_matchup_df to PlayerAnalytics "
+                "(or build_player_analytics) to use the FFA-069 matchup "
+                "contribution frames"
+            )
+        return self.season_matchup_df
+
 
 def build_player_analytics(
     player_week_df: pd.DataFrame,
@@ -384,6 +607,7 @@ def build_player_analytics(
     num_teams: Optional[int],
     player_boom_bust_threshold: float = PLAYER_BOOM_BUST_THRESHOLD_STDEVS,
     position_boom_bust_threshold: float = POSITION_BOOM_BUST_THRESHOLD_STDEVS,
+    season_matchup_df: Optional[pd.DataFrame] = None,
 ) -> PlayerAnalytics:
     """Build a :class:`PlayerAnalytics` from an already-built fact table.
 
@@ -409,6 +633,12 @@ def build_player_analytics(
         position_boom_bust_threshold: Threshold for the boom/bust columns of
             :attr:`~PlayerAnalytics.position_summary_df`. Defaults to
             :data:`~fantasy_analyzer.players.position_strength.BOOM_BUST_THRESHOLD_STDEVS`.
+        season_matchup_df: FFA-033's
+            :func:`~fantasy_analyzer.matchups.season_matchups.build_season_matchup_df`
+            output for the same league-season and phase. Optional; required
+            only by :attr:`~PlayerAnalytics.player_contribution_df` and
+            :attr:`~PlayerAnalytics.positional_advantage_df`, which raise
+            ``ValueError`` if it was omitted.
 
     Returns:
         A :class:`PlayerAnalytics` with its ``player_season_df`` already
@@ -420,4 +650,5 @@ def build_player_analytics(
         num_teams=num_teams,
         player_boom_bust_threshold=player_boom_bust_threshold,
         position_boom_bust_threshold=position_boom_bust_threshold,
+        season_matchup_df=season_matchup_df,
     )
