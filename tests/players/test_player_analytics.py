@@ -1,21 +1,23 @@
 """Tests for the PlayerAnalytics composition service (FFA-071).
 
-``PlayerAnalytics`` is pure composition over FFA-064 through FFA-068's already
+``PlayerAnalytics`` is pure composition over FFA-064 through FFA-070's already
 tested ``build_*`` functions -- it defines no new metrics of its own. These
 tests therefore check that each exposed frame equals what calling the
 underlying ``build_*`` function directly would produce (the composition is
 wired to the right inputs, per AGENTS.md's composition-only requirement), plus
 the construction-time behavior (``player_season_df`` is built once and reused
 by the value frames), the threshold passthroughs, and the documented edge
-cases (empty input, ``num_teams=None``, missing values, ties, and the
-caller-filters-the-phase-first contract).
+cases (empty input, ``num_teams=None``, missing values, ties, the
+caller-filters-the-phase-first contract, and the ``ValueError`` the two
+FFA-069 frames raise when the optional ``season_matchup_df`` was omitted).
 
 One hand-computed toy example is included so the wiring is verified against
 arithmetic and not only against the builders themselves: a composition bug
 that passed, say, the wrong ``roster_positions`` would still satisfy an
 equality test written with the same wrong argument.
 
-Inputs are hand-built ``player_week_df``-shaped frames -- no HTTP calls.
+Inputs are hand-built ``player_week_df``-shaped (and, for FFA-069,
+``season_matchup_df``-shaped) frames -- no HTTP calls.
 """
 
 from __future__ import annotations
@@ -23,16 +25,24 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from fantasy_analyzer.matchups.season_matchups import SEASON_MATCHUP_COLUMNS
 from fantasy_analyzer.players import (
     PLAYER_WEEK_COLUMNS,
     PlayerAnalytics,
+    build_bench_allocation_metrics,
+    build_flex_usage_metrics,
     build_lineup_efficiency_metrics,
+    build_matchup_player_contributions,
     build_player_analytics,
     build_player_performance_metrics,
     build_player_value_metrics,
     build_position_scarcity_metrics,
     build_position_strength_metrics,
+    build_positional_matchup_advantage,
+    build_positional_preference_metrics,
+    build_roster_construction_metrics,
     build_roster_efficiency_metrics,
+    build_start_sit_tendency_metrics,
 )
 
 #: A minimal set of provider-style raw stat columns, matching the sibling
@@ -136,11 +146,48 @@ def _toy_df() -> pd.DataFrame:
     return _df(_toy_rows())
 
 
+def _toy_matchup_df() -> pd.DataFrame:
+    """The paired matchups the toy fact table's two rosters played.
+
+    Roster 1 beats roster 2 in both weeks; ``points_1``/``points_2`` are the
+    sums of each roster's started ``fantasy_points`` above (week 1:
+    20+10+5+8 = 43 vs. 15+6+9+3 = 33; week 2: 10+20+5+2 = 37 vs. 33), so the
+    two hand-built frames are mutually consistent.
+    """
+    rows = [
+        {
+            "season": 2025,
+            "week": week,
+            "is_playoff": False,
+            "matchup_id": 1,
+            "roster_1_id": 1,
+            "roster_2_id": 2,
+            "owner_1": "Alpha",
+            "owner_2": "Bravo",
+            "points_1": points_1,
+            "points_2": 33.0,
+            "winner": 1,
+            "loser": 2,
+            "is_tie": False,
+            "margin": points_1 - 33.0,
+            "point_differential": points_1 - 33.0,
+        }
+        for week, points_1 in ((1, 43.0), (2, 37.0))
+    ]
+    return pd.DataFrame(rows, columns=SEASON_MATCHUP_COLUMNS)
+
+
 def _toy_analytics(**kwargs) -> PlayerAnalytics:
     kwargs.setdefault("player_week_df", _toy_df())
     kwargs.setdefault("roster_positions", ROSTER_POSITIONS)
     kwargs.setdefault("num_teams", NUM_TEAMS)
     return PlayerAnalytics(**kwargs)
+
+
+def _toy_matchup_analytics(**kwargs) -> PlayerAnalytics:
+    """A :func:`_toy_analytics` that also carries the matchup frame."""
+    kwargs.setdefault("season_matchup_df", _toy_matchup_df())
+    return _toy_analytics(**kwargs)
 
 
 # --- hand-checkable toy example -------------------------------------------
@@ -348,6 +395,250 @@ def test_num_teams_reaches_the_replacement_cutoff() -> None:
     assert small_rb["replacement_ppg"] >= large_rb["replacement_ppg"]
 
 
+# --- FFA-070 lineup tendency frames ---------------------------------------
+
+
+def test_roster_construction_df_matches_direct_call() -> None:
+    analytics = _toy_analytics()
+
+    expected = build_roster_construction_metrics(_toy_df())
+    pd.testing.assert_frame_equal(analytics.roster_construction_df, expected)
+
+
+def test_roster_construction_df_matches_hand_arithmetic() -> None:
+    """Roster 1 ("Alpha") over two weeks: one QB (p1), two RBs (p2, p4) and
+    two WRs (p3, p5) rostered every week -- 2 + 4 + 4 = 10 rostered
+    player-weeks, so the shares are 0.2 / 0.4 / 0.4.
+    """
+    frame = _toy_analytics().roster_construction_df
+    alpha = frame.loc[frame["fantasy_team"] == "Alpha"].set_index("position")
+
+    assert int(alpha.loc["QB", "distinct_players"]) == 1
+    assert int(alpha.loc["RB", "distinct_players"]) == 2
+    assert int(alpha.loc["QB", "rostered_player_weeks"]) == 2
+    assert int(alpha.loc["RB", "rostered_player_weeks"]) == 4
+    assert alpha.loc["QB", "roster_share"] == pytest.approx(0.2)
+    assert alpha.loc["RB", "roster_share"] == pytest.approx(0.4)
+    assert alpha.loc["WR", "roster_share"] == pytest.approx(0.4)
+
+
+def test_bench_allocation_df_matches_direct_call() -> None:
+    analytics = _toy_analytics()
+
+    expected = build_bench_allocation_metrics(_toy_df())
+    pd.testing.assert_frame_equal(analytics.bench_allocation_df, expected)
+
+
+def test_bench_allocation_df_matches_hand_arithmetic() -> None:
+    """Alpha benches only p5 (WR), both weeks: one row, 2 weeks, share 1.0."""
+    frame = _toy_analytics().bench_allocation_df
+    alpha = frame.loc[frame["fantasy_team"] == "Alpha"]
+
+    assert list(alpha["position"]) == ["WR"]
+    assert int(alpha.iloc[0]["bench_weeks"]) == 2
+    assert alpha.iloc[0]["bench_share"] == pytest.approx(1.0)
+
+
+def test_flex_usage_df_matches_direct_call() -> None:
+    analytics = _toy_analytics()
+
+    expected = build_flex_usage_metrics(_toy_df(), ROSTER_POSITIONS)
+    pd.testing.assert_frame_equal(analytics.flex_usage_df, expected)
+
+
+def test_flex_usage_df_uses_the_leagues_roster_positions() -> None:
+    """Alpha starts two RBs against one dedicated RB slot, so the FLEX is
+    RB-filled in both weeks (2 flex starts, share 1.0, rank 1). Dropping the
+    FLEX slot from the league's list must empty the frame, proving
+    ``roster_positions`` reaches the builder rather than a default.
+    """
+    frame = _toy_analytics().flex_usage_df
+    alpha = frame.loc[frame["fantasy_team"] == "Alpha"]
+
+    assert list(alpha["position"]) == ["RB"]
+    assert int(alpha.iloc[0]["flex_starts"]) == 2
+    assert alpha.iloc[0]["flex_start_share"] == pytest.approx(1.0)
+    assert int(alpha.iloc[0]["flex_usage_rank"]) == 1
+
+    no_flex = [slot for slot in ROSTER_POSITIONS if slot != "FLEX"]
+    assert _toy_analytics(roster_positions=no_flex).flex_usage_df.empty
+
+
+def test_start_sit_tendency_df_matches_direct_call() -> None:
+    analytics = _toy_analytics()
+
+    expected = build_start_sit_tendency_metrics(_toy_df(), ROSTER_POSITIONS)
+    pd.testing.assert_frame_equal(analytics.start_sit_tendency_df, expected)
+
+
+def test_start_sit_tendency_df_wraps_the_roster_efficiency_frame() -> None:
+    """Every ``roster_efficiency_df`` column is carried through unchanged,
+    plus the two per-week rates: roster 1's week 1 lineup has one wrong start
+    (p3) and one wrong sit (p5) while its week 2 lineup is already optimal,
+    so both season totals are 1 over 2 weeks played, i.e. 0.5 per week.
+    """
+    analytics = _toy_analytics()
+    tendencies = analytics.start_sit_tendency_df
+    efficiency = analytics.roster_efficiency_df
+
+    for column in efficiency.columns:
+        pd.testing.assert_series_equal(tendencies[column], efficiency[column])
+
+    row = tendencies.loc[tendencies["roster_id"] == 1].iloc[0]
+    assert int(row["weeks_played"]) == 2
+    assert int(row["total_suboptimal_starts"]) == 1
+    assert int(row["total_suboptimal_sits"]) == 1
+    assert row["suboptimal_starts_per_week"] == pytest.approx(0.5)
+    assert row["suboptimal_sits_per_week"] == pytest.approx(0.5)
+
+
+def test_positional_preference_df_matches_direct_call() -> None:
+    analytics = _toy_analytics()
+
+    expected = build_positional_preference_metrics(_toy_df())
+    pd.testing.assert_frame_equal(analytics.positional_preference_df, expected)
+
+
+def test_positional_preference_df_matches_hand_arithmetic() -> None:
+    """Alpha's WRs: 4 rostered weeks (p3, p5 x2), 2 started (p3) and 2
+    benched (p5); 8 started player-weeks across the team-season, so the WR
+    start share is 2/8 = 0.25.
+    """
+    frame = _toy_analytics().positional_preference_df
+    alpha = frame.loc[frame["fantasy_team"] == "Alpha"].set_index("position")
+
+    assert int(alpha.loc["WR", "rostered_player_weeks"]) == 4
+    assert int(alpha.loc["WR", "started_weeks"]) == 2
+    assert int(alpha.loc["WR", "bench_weeks"]) == 2
+    assert alpha.loc["WR", "start_share"] == pytest.approx(0.25)
+
+
+def test_tendency_frames_do_not_need_season_matchup_df() -> None:
+    """All five FFA-070 frames must work on an instance built without the
+    optional matchup frame, and must be identical when one is supplied.
+    """
+    without = _toy_analytics()
+    with_matchups = _toy_matchup_analytics()
+
+    assert without.season_matchup_df is None
+    for attribute in (
+        "roster_construction_df",
+        "bench_allocation_df",
+        "flex_usage_df",
+        "start_sit_tendency_df",
+        "positional_preference_df",
+    ):
+        frame = getattr(without, attribute)
+        assert not frame.empty
+        pd.testing.assert_frame_equal(frame, getattr(with_matchups, attribute))
+
+
+# --- FFA-069 matchup contribution frames ----------------------------------
+
+
+def test_player_contribution_df_matches_direct_call() -> None:
+    analytics = _toy_matchup_analytics()
+
+    expected = build_matchup_player_contributions(_toy_matchup_df(), _toy_df())
+    pd.testing.assert_frame_equal(analytics.player_contribution_df, expected)
+
+
+def test_player_contribution_df_matches_hand_arithmetic() -> None:
+    """Week 1, roster 1: starters 20 + 10 + 5 + 8 = 43 against Bravo's 33, so
+    the margin is +10 and p1's share is 20/43. p1 is the roster's best
+    starter that week (rank 1). Bench p5 (12.0) never appears.
+    """
+    frame = _toy_matchup_analytics().player_contribution_df
+    week_1 = frame.loc[(frame["week"] == 1) & (frame["roster_id"] == 1)]
+
+    assert list(week_1["sleeper_player_id"]) == ["p1", "p2", "p4", "p3"]
+    assert "p5" not in set(frame["sleeper_player_id"])
+
+    top = week_1.iloc[0]
+    assert int(top["contribution_rank"]) == 1
+    assert top["fantasy_points"] == pytest.approx(20.0)
+    assert top["team_points"] == pytest.approx(43.0)
+    assert top["opponent_points"] == pytest.approx(33.0)
+    assert top["margin"] == pytest.approx(10.0)
+    assert top["result"] == "win"
+    assert top["share_of_team_points"] == pytest.approx(20.0 / 43.0)
+
+
+def test_positional_advantage_df_matches_direct_call() -> None:
+    analytics = _toy_matchup_analytics()
+
+    expected = build_positional_matchup_advantage(_toy_matchup_df(), _toy_df())
+    pd.testing.assert_frame_equal(analytics.positional_advantage_df, expected)
+
+
+def test_positional_advantage_df_matches_hand_arithmetic() -> None:
+    """Week 1, roster 1 vs. roster 2: QB 20 - 15 = +5, RB (10+8) - 6 = +12,
+    WR 5 - 9 = -4, TE 0 - 3 = -3 (a position Alpha never started, but Bravo
+    did). The four sum to the week's +10 margin.
+    """
+    frame = _toy_matchup_analytics().positional_advantage_df
+    week_1 = frame.loc[(frame["week"] == 1) & (frame["roster_id"] == 1)]
+    advantage = week_1.set_index("position")["positional_advantage"]
+
+    assert advantage.loc["QB"] == pytest.approx(5.0)
+    assert advantage.loc["RB"] == pytest.approx(12.0)
+    assert advantage.loc["WR"] == pytest.approx(-4.0)
+    assert advantage.loc["TE"] == pytest.approx(-3.0)
+    assert advantage.sum() == pytest.approx(10.0)
+    assert int(week_1.set_index("position").loc["TE", "own_starters"]) == 0
+
+
+def test_matchup_frames_raise_without_season_matchup_df() -> None:
+    """The documented wiring error: no empty frame, no partial result."""
+    analytics = _toy_analytics()
+
+    with pytest.raises(ValueError, match="season_matchup_df"):
+        analytics.player_contribution_df
+    with pytest.raises(ValueError, match="season_matchup_df"):
+        analytics.positional_advantage_df
+
+
+def test_missing_season_matchup_df_does_not_break_construction() -> None:
+    """The ``ValueError`` is raised on access, not at construction, so every
+    other frame stays reachable on the same instance.
+    """
+    analytics = _toy_analytics()
+
+    assert not analytics.player_season_df.empty
+    assert not analytics.roster_efficiency_df.empty
+    with pytest.raises(ValueError, match="season_matchup_df"):
+        analytics.player_contribution_df
+
+
+def test_empty_season_matchup_df_is_a_valid_input() -> None:
+    """An empty matchup frame is data, not a missing argument: the builders'
+    own empty-input behavior applies and nothing raises.
+    """
+    empty = pd.DataFrame(columns=SEASON_MATCHUP_COLUMNS)
+    analytics = _toy_analytics(season_matchup_df=empty)
+
+    assert analytics.player_contribution_df.empty
+    assert analytics.positional_advantage_df.empty
+
+
+def test_matchup_frames_reflect_a_phase_filtered_matchup_frame() -> None:
+    """Filtering both inputs on the same week boundary is the caller's job;
+    the FFA-069 frames must then cover only those weeks.
+    """
+    week_1_players = _toy_df().loc[lambda frame: frame["week"] < 2]
+    week_1_matchups = _toy_matchup_df().loc[lambda frame: frame["week"] < 2]
+    analytics = _toy_analytics(
+        player_week_df=week_1_players, season_matchup_df=week_1_matchups
+    )
+
+    assert set(analytics.player_contribution_df["week"]) == {1}
+    assert set(analytics.positional_advantage_df["week"]) == {1}
+    pd.testing.assert_frame_equal(
+        analytics.player_contribution_df,
+        build_matchup_player_contributions(week_1_matchups, week_1_players),
+    )
+
+
 # --- ties and missing values ----------------------------------------------
 
 
@@ -419,7 +710,7 @@ def test_phase_filtering_is_the_callers_job_and_changes_every_frame() -> None:
 
 
 def test_empty_player_week_df_produces_empty_frames_everywhere() -> None:
-    analytics = _toy_analytics(player_week_df=_df([]))
+    analytics = _toy_matchup_analytics(player_week_df=_df([]))
 
     assert analytics.player_weekly_df.empty
     assert analytics.player_season_df.empty
@@ -428,6 +719,13 @@ def test_empty_player_week_df_produces_empty_frames_everywhere() -> None:
     assert analytics.roster_efficiency_df.empty
     assert analytics.player_value_df.empty
     assert analytics.position_scarcity_df.empty
+    assert analytics.roster_construction_df.empty
+    assert analytics.bench_allocation_df.empty
+    assert analytics.flex_usage_df.empty
+    assert analytics.start_sit_tendency_df.empty
+    assert analytics.positional_preference_df.empty
+    assert analytics.player_contribution_df.empty
+    assert analytics.positional_advantage_df.empty
 
 
 # --- build_player_analytics factory ---------------------------------------
@@ -452,6 +750,41 @@ def test_build_player_analytics_factory_matches_direct_construction() -> None:
     )
     pd.testing.assert_frame_equal(
         via_factory.roster_efficiency_df, via_constructor.roster_efficiency_df
+    )
+    pd.testing.assert_frame_equal(
+        via_factory.positional_preference_df, via_constructor.positional_preference_df
+    )
+
+
+def test_build_player_analytics_factory_defaults_season_matchup_df_to_none() -> None:
+    """The positional three-argument call every existing caller uses must keep
+    working, leaving the FFA-069 frames unavailable rather than empty.
+    """
+    analytics = build_player_analytics(_toy_df(), ROSTER_POSITIONS, NUM_TEAMS)
+
+    assert analytics.season_matchup_df is None
+    assert not analytics.roster_construction_df.empty
+    with pytest.raises(ValueError, match="season_matchup_df"):
+        analytics.player_contribution_df
+
+
+def test_build_player_analytics_factory_passes_through_season_matchup_df() -> None:
+    season_matchup_df = _toy_matchup_df()
+    analytics = build_player_analytics(
+        _toy_df(),
+        ROSTER_POSITIONS,
+        NUM_TEAMS,
+        season_matchup_df=season_matchup_df,
+    )
+
+    assert analytics.season_matchup_df is season_matchup_df
+    pd.testing.assert_frame_equal(
+        analytics.player_contribution_df,
+        build_matchup_player_contributions(season_matchup_df, _toy_df()),
+    )
+    pd.testing.assert_frame_equal(
+        analytics.positional_advantage_df,
+        build_positional_matchup_advantage(season_matchup_df, _toy_df()),
     )
 
 
