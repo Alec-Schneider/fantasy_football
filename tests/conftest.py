@@ -34,3 +34,9 @@ def nflverse_fixture_path() -> Path:
 def nflverse_games_fixture_path() -> Path:
     """Path to the sanitized nflverse games/schedule CSV fixture."""
     return FIXTURES_DIR / "nflverse" / "games.csv"
+
+
+@pytest.fixture
+def id_crosswalk_fixture_path() -> Path:
+    """Path to the sanitized DynastyProcess player-ID crosswalk CSV fixture."""
+    return FIXTURES_DIR / "id_crosswalk" / "db_playerids.csv"

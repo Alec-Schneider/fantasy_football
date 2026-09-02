@@ -1,0 +1,8 @@
+mfl_id,sleeper_id,gsis_id,name,position,team
+100,4984,00-0034857,Josh Allen,QB,BUF
+101,,00-0099999,No Sleeper Match,WR,NYJ
+102,9010,,No Gsis Match,RB,KC
+103,5000,00-0055555,Stale Duplicate,WR,NYJ
+104,5001,00-0055555,Current Player,WR,NYJ
+105,6000,00-0066661,Old Mapping,TE,SF
+106,6000,00-0066662,New Mapping,TE,SF

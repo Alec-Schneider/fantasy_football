@@ -3,9 +3,19 @@
 from fantasy_analyzer.players.crosswalk import (
     CROSSWALK_COLUMNS,
     build_id_crosswalk,
+    build_id_crosswalk_from_player_ids,
     gsis_to_sleeper_lookup,
     sleeper_to_gsis_lookup,
 )
+from fantasy_analyzer.players.id_crosswalk_cache import (
+    DEFAULT_CACHE_DIR as ID_CROSSWALK_DEFAULT_CACHE_DIR,
+)
+from fantasy_analyzer.players.id_crosswalk_cache import (
+    get_player_ids_cached,
+    load_player_ids_cache,
+    refresh_player_ids_cache,
+)
+from fantasy_analyzer.players.id_crosswalk_client import PlayerIdCrosswalkClient
 from fantasy_analyzer.players.lineup_efficiency import (
     LINEUP_EFFICIENCY_COLUMNS,
     ROSTER_EFFICIENCY_COLUMNS,
@@ -141,8 +151,14 @@ __all__ = [
     "get_player_stats_cached",
     "CROSSWALK_COLUMNS",
     "build_id_crosswalk",
+    "build_id_crosswalk_from_player_ids",
     "gsis_to_sleeper_lookup",
     "sleeper_to_gsis_lookup",
+    "PlayerIdCrosswalkClient",
+    "ID_CROSSWALK_DEFAULT_CACHE_DIR",
+    "load_player_ids_cache",
+    "refresh_player_ids_cache",
+    "get_player_ids_cached",
     "SCORING_KEY_TO_STAT_COLUMNS",
     "ScoringResult",
     "calculate_fantasy_points",
