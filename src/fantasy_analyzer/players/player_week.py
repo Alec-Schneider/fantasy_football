@@ -146,11 +146,38 @@ Not implemented here (see FFA-065 through FFA-070)
 
 This module only builds the fact table. It deliberately does not compute
 any *metric* on top of it (points per game, volatility, optimal lineup,
-replacement-level value, ...) -- those are separate, later tickets. It also
-does not add league-wide free-agent rows (out of scope per the row-universe
-decision above); if a future ticket (FFA-068, replacement-level value)
-needs league-wide player-weeks, that is a new, separate row-source concern,
-not an extension of this table's rostered-only scope.
+replacement-level value, ...) -- those are separate, later tickets.
+
+A second row source: :func:`build_league_wide_player_week_fact_table`
+------------------------------------------------------------------------
+
+The rostered-only scope above is deliberate for
+:func:`build_player_week_fact_table`, and stays unchanged: ``roster_id``/
+``fantasy_team``/``started``/``bench`` are only meaningful for a player
+someone actually rostered, so that function's row universe stays exactly
+Sleeper's roster data.
+
+But FFA-068's replacement-level value work (and everything built on it --
+FFA-073's composite ranking among them) computes "replacement level" from
+whatever player pool it is handed, and a pool of only *this league's*
+rostered players understates it: the correct baseline is the best player a
+manager could have added off the wire, which by definition is never on
+anyone's roster. :func:`build_league_wide_player_week_fact_table` is the
+separate, new row-source this module's own docstring anticipated -- not an
+extension of the rostered-only function's contract, a second function
+alongside it, reusing the same identity-enrichment and scoring tail. Its
+row universe is every player the configured provider has stats for that
+week with a resolvable ``sleeper_player_id``, still left-enriched with
+roster context where a player happens to be rostered (``roster_id``/
+``fantasy_team``/``started``/``bench`` populated exactly as the rostered-only
+function would), and with ``roster_id = None``, ``fantasy_team = None``,
+``started = False``, ``bench = False`` for everyone else -- a free agent is,
+truthfully, on nobody's bench. A provider row with no resolvable
+``sleeper_player_id`` (the crosswalk found no match) is dropped rather than
+included as an unidentifiable row, since every downstream FFA-06x module is
+keyed on that ID. Both functions return the identical
+:class:`PlayerWeekFactTable` shape, so any caller of one can switch to the
+other without touching FFA-065 through FFA-073.
 """
 
 from __future__ import annotations
@@ -321,12 +348,128 @@ def build_player_week_fact_table(
             :attr:`~fantasy_analyzer.matchups.loader.WeekMatchups.season` is
             ``None`` -- see the module docstring.
     """
-    owner_by_roster = (
+    owner_by_roster = _owner_by_roster(teams_df)
+    roster_rows, fetched_stats = _collect_weekly_rows(weeks, provider, owner_by_roster)
+
+    if not roster_rows:
+        return _empty_fact_table(scoring_settings)
+
+    roster_df = pd.DataFrame(roster_rows, columns=_ROSTER_ROW_COLUMNS)
+    stats_df = _concat_stats(fetched_stats)
+
+    merged = roster_df.merge(
+        stats_df, on=["season", "week", "sleeper_player_id"], how="left"
+    )
+
+    return _finalize_fact_table(merged, players_df, scoring_settings)
+
+
+def build_league_wide_player_week_fact_table(
+    weeks: list[WeekMatchups],
+    teams_df: pd.DataFrame,
+    players_df: pd.DataFrame,
+    provider: PlayerStatsProvider,
+    scoring_settings: Mapping[str, float],
+) -> PlayerWeekFactTable:
+    """Build the player-week fact table over every player the provider covers.
+
+    See the module docstring's "A second row source" section for why this
+    function exists alongside :func:`build_player_week_fact_table` rather
+    than as a parameter on it. Row universe: every ``(week,
+    sleeper_player_id)`` the configured ``provider`` has stats for, for
+    every week in ``weeks`` that has at least one roster entry -- not just
+    the players this league happened to roster. A player who *was* rostered
+    that week gets the identical ``roster_id``/``fantasy_team``/``started``/
+    ``bench`` values :func:`build_player_week_fact_table` would give him; a
+    player who was not gets ``roster_id = None``, ``fantasy_team = None``,
+    ``started = False``, ``bench = False``. A provider row with no
+    resolvable ``sleeper_player_id`` is dropped (see the module docstring)
+    rather than emitted as an unidentifiable row.
+
+    Args:
+        weeks: Same as :func:`build_player_week_fact_table`.
+        teams_df: Same as :func:`build_player_week_fact_table`.
+        players_df: Same as :func:`build_player_week_fact_table`.
+        provider: Same as :func:`build_player_week_fact_table`. Every player
+            it reports stats for, per week, is a candidate row here (not
+            only players present in ``weeks``' roster entries).
+        scoring_settings: Same as :func:`build_player_week_fact_table`.
+
+    Returns:
+        A :class:`PlayerWeekFactTable`, the identical shape
+        :func:`build_player_week_fact_table` returns. Rows are ordered by
+        ascending ``week``; within a week, rostered players keep
+        :func:`build_player_week_fact_table`'s relative order and
+        free-agent-only rows follow. Empty under the identical conditions as
+        the rostered-only function.
+
+    Raises:
+        ValueError: Identical to :func:`build_player_week_fact_table`.
+    """
+    owner_by_roster = _owner_by_roster(teams_df)
+    roster_rows, fetched_stats = _collect_weekly_rows(weeks, provider, owner_by_roster)
+
+    if not roster_rows and not fetched_stats:
+        return _empty_fact_table(scoring_settings)
+
+    roster_df = pd.DataFrame(roster_rows, columns=_ROSTER_ROW_COLUMNS)
+    stats_df = _concat_stats(fetched_stats)
+
+    merged = roster_df.merge(
+        stats_df, on=["season", "week", "sleeper_player_id"], how="outer"
+    )
+
+    # A provider row with no resolvable sleeper_player_id cannot be
+    # identified by anything downstream -- drop it rather than emit an
+    # unidentifiable row (see the module docstring).
+    merged = merged[merged["sleeper_player_id"].notna()]
+
+    # Free-agent-only rows (right-side-only in the outer join) start with
+    # NaN roster_id/fantasy_team -- correct, nobody rostered them -- and NaN
+    # started/bench, which this function defines as False: a free agent is
+    # on nobody's bench.
+    merged["started"] = merged["started"].fillna(False).astype(bool)
+    merged["bench"] = merged["bench"].fillna(False).astype(bool)
+
+    merged = merged.sort_values(["week"], kind="stable").reset_index(drop=True)
+
+    return _finalize_fact_table(merged, players_df, scoring_settings)
+
+
+#: Columns of the intermediate roster-context frame both builders join
+#: provider stats onto. Not part of the public output shape -- see
+#: :data:`PLAYER_WEEK_COLUMNS` for that.
+_ROSTER_ROW_COLUMNS = [
+    "season",
+    "week",
+    "roster_id",
+    "fantasy_team",
+    "sleeper_player_id",
+    "started",
+    "bench",
+]
+
+
+def _owner_by_roster(teams_df: pd.DataFrame) -> dict:
+    """``roster_id -> display_name``, or ``{}`` for an empty ``teams_df``."""
+    return (
         teams_df.set_index("roster_id")["display_name"].to_dict()
         if not teams_df.empty
         else {}
     )
 
+
+def _collect_weekly_rows(
+    weeks: list[WeekMatchups],
+    provider: PlayerStatsProvider,
+    owner_by_roster: Mapping[int, object],
+) -> tuple[list[dict], list[pd.DataFrame]]:
+    """Shared week loop: roster rows plus one provider fetch per resolvable week.
+
+    Identical for both builders -- they diverge only in how ``stats_df`` is
+    joined onto the resulting ``roster_df`` (left vs. outer), not in how
+    either input is collected.
+    """
     roster_rows: list[dict] = []
     fetched_stats: list[pd.DataFrame] = []
     for week in weeks:
@@ -338,42 +481,43 @@ def build_player_week_fact_table(
         roster_rows.extend(_week_roster_rows(week, season, owner_by_roster))
         fetched_stats.append(provider.weekly_stats(season, week.week))
 
-    if not roster_rows:
-        empty_df = pd.DataFrame(columns=PLAYER_WEEK_COLUMNS + ["fantasy_points"])
-        # calculate_fantasy_points' unsupported-key determination depends
-        # only on scoring_settings, not on any row/column of the stats
-        # frame passed in -- an empty frame is a legal, cheap way to reuse
-        # that logic here rather than duplicating it.
-        unsupported = calculate_fantasy_points(
-            pd.DataFrame(), scoring_settings
-        ).unsupported_scoring_keys
-        return PlayerWeekFactTable(
-            player_week_df=empty_df, unsupported_scoring_keys=unsupported
-        )
+    return roster_rows, fetched_stats
 
-    roster_df = pd.DataFrame(
-        roster_rows,
-        columns=[
-            "season",
-            "week",
-            "roster_id",
-            "fantasy_team",
-            "sleeper_player_id",
-            "started",
-            "bench",
-        ],
-    )
 
-    stats_df = (
+def _concat_stats(fetched_stats: list[pd.DataFrame]) -> pd.DataFrame:
+    """Concatenate one season's worth of per-week provider frames."""
+    return (
         pd.concat(fetched_stats, ignore_index=True, sort=False)
         if fetched_stats
         else pd.DataFrame(columns=["season", "week", "sleeper_player_id"])
     )
 
-    merged = roster_df.merge(
-        stats_df, on=["season", "week", "sleeper_player_id"], how="left"
+
+def _empty_fact_table(scoring_settings: Mapping[str, float]) -> PlayerWeekFactTable:
+    """The shared "no rows to build" result for either builder."""
+    empty_df = pd.DataFrame(columns=PLAYER_WEEK_COLUMNS + ["fantasy_points"])
+    # calculate_fantasy_points' unsupported-key determination depends only
+    # on scoring_settings, not on any row/column of the stats frame passed
+    # in -- an empty frame is a legal, cheap way to reuse that logic here
+    # rather than duplicating it.
+    unsupported = calculate_fantasy_points(
+        pd.DataFrame(), scoring_settings
+    ).unsupported_scoring_keys
+    return PlayerWeekFactTable(
+        player_week_df=empty_df, unsupported_scoring_keys=unsupported
     )
 
+
+def _finalize_fact_table(
+    merged: pd.DataFrame,
+    players_df: pd.DataFrame,
+    scoring_settings: Mapping[str, float],
+) -> PlayerWeekFactTable:
+    """Identity enrichment + scoring tail shared by both builders.
+
+    ``merged`` is a roster-context frame already left- or outer-joined with
+    provider stats, one row per (week, player) to emit.
+    """
     for column in ("gsis_id", "player_name", "position", "nfl_team"):
         if column not in merged.columns:
             merged[column] = None

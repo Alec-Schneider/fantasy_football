@@ -18,6 +18,7 @@ from fantasy_analyzer.players import (
     PLAYER_WEEK_COLUMNS,
     PLAYER_WEEK_IDENTITY_COLUMNS,
     PlayerWeekFactTable,
+    build_league_wide_player_week_fact_table,
     build_player_week_fact_table,
 )
 
@@ -479,3 +480,176 @@ def test_week_with_no_entries_and_no_season_label_is_skipped_without_raising(
     )
 
     assert result.player_week_df.empty
+
+
+# -------------------------
+# build_league_wide_player_week_fact_table (also FFA-064)
+# -------------------------
+
+#: A free agent -- real week-1 provider stats, on nobody's roster.
+#: 3 receptions * 0.5 + 40 receiving_yards * 0.1 = 1.5 + 4.0 = 5.5.
+FREE_AGENT_ROW = {
+    "season": 2025,
+    "week": 1,
+    "sleeper_player_id": "9999",
+    "gsis_id": "00-9999",
+    "player_name": "Waiver Wire Guy",
+    "position": "RB",
+    "nfl_team": "DAL",
+    "passing_yards": 0,
+    "passing_tds": 0,
+    "receptions": 3,
+    "receiving_yards": 40,
+}
+
+#: A provider row the crosswalk could not resolve to a Sleeper ID -- must
+#: never surface as a row, rostered-only or league-wide.
+UNRESOLVABLE_ROW = {
+    "season": 2025,
+    "week": 1,
+    "sleeper_player_id": None,
+    "gsis_id": "00-0000",
+    "player_name": "No Crosswalk Match",
+    "position": "WR",
+    "nfl_team": "NYJ",
+    "passing_yards": 0,
+    "passing_tds": 0,
+    "receptions": 2,
+    "receiving_yards": 15,
+}
+
+
+@pytest.fixture
+def league_wide_provider() -> FakePlayerStatsProvider:
+    return FakePlayerStatsProvider(
+        WEEK_ONE_STATS_ROWS
+        + [FREE_AGENT_ROW, UNRESOLVABLE_ROW]
+        + WEEK_TWO_STATS_ROWS,
+        STAT_COLUMNS,
+    )
+
+
+def test_league_wide_includes_a_free_agent_with_correct_points(
+    league_wide_provider: FakePlayerStatsProvider,
+) -> None:
+    result = build_league_wide_player_week_fact_table(
+        [_week_one(), _week_two_bye()],
+        TEAMS_DF,
+        PLAYERS_DF,
+        league_wide_provider,
+        SCORING_SETTINGS,
+    )
+    df = result.player_week_df
+
+    assert "9999" in set(df["sleeper_player_id"])
+    row = df.set_index("sleeper_player_id").loc["9999"]
+    assert pd.isna(row["roster_id"])
+    assert pd.isna(row["fantasy_team"])
+    assert bool(row["started"]) is False
+    assert bool(row["bench"]) is False
+    assert row["fantasy_points"] == pytest.approx(5.5)
+    assert row["player_name"] == "Waiver Wire Guy"
+
+
+def test_league_wide_drops_a_provider_row_with_no_resolvable_sleeper_id(
+    league_wide_provider: FakePlayerStatsProvider,
+) -> None:
+    result = build_league_wide_player_week_fact_table(
+        [_week_one(), _week_two_bye()],
+        TEAMS_DF,
+        PLAYERS_DF,
+        league_wide_provider,
+        SCORING_SETTINGS,
+    )
+    df = result.player_week_df
+
+    assert "No Crosswalk Match" not in set(df["player_name"])
+    assert not df["sleeper_player_id"].isna().any()
+
+
+def test_league_wide_still_includes_every_rostered_player_row_unchanged(
+    provider: FakePlayerStatsProvider,
+    league_wide_provider: FakePlayerStatsProvider,
+) -> None:
+    """Rostered rows carry the identical roster context as the rostered-only
+    builder -- the two functions diverge only in which extra rows are added."""
+    rostered_only = build_player_week_fact_table(
+        [_week_one(), _week_two_bye()], TEAMS_DF, PLAYERS_DF, provider, SCORING_SETTINGS
+    )
+    league_wide = build_league_wide_player_week_fact_table(
+        [_week_one(), _week_two_bye()],
+        TEAMS_DF,
+        PLAYERS_DF,
+        league_wide_provider,
+        SCORING_SETTINGS,
+    )
+
+    rostered_ids = set(rostered_only.player_week_df["sleeper_player_id"])
+    league_wide_by_id = league_wide.player_week_df.set_index("sleeper_player_id")
+
+    for player_id in rostered_ids:
+        rostered_row = rostered_only.player_week_df.set_index(
+            "sleeper_player_id"
+        ).loc[player_id]
+        wide_row = league_wide_by_id.loc[player_id]
+        assert wide_row["roster_id"] == rostered_row["roster_id"]
+        assert wide_row["fantasy_team"] == rostered_row["fantasy_team"]
+        assert bool(wide_row["started"]) == bool(rostered_row["started"])
+        assert bool(wide_row["bench"]) == bool(rostered_row["bench"])
+        assert wide_row["fantasy_points"] == pytest.approx(
+            rostered_row["fantasy_points"]
+        )
+
+
+def test_league_wide_row_count_is_rostered_count_plus_free_agents(
+    provider: FakePlayerStatsProvider,
+    league_wide_provider: FakePlayerStatsProvider,
+) -> None:
+    rostered_only = build_player_week_fact_table(
+        [_week_one(), _week_two_bye()], TEAMS_DF, PLAYERS_DF, provider, SCORING_SETTINGS
+    )
+    league_wide = build_league_wide_player_week_fact_table(
+        [_week_one(), _week_two_bye()],
+        TEAMS_DF,
+        PLAYERS_DF,
+        league_wide_provider,
+        SCORING_SETTINGS,
+    )
+
+    # +1 free agent ("9999"); the unresolvable row is dropped, not counted.
+    assert len(league_wide.player_week_df) == len(rostered_only.player_week_df) + 1
+
+
+def test_league_wide_columns_and_column_order_match_rostered_only(
+    league_wide_provider: FakePlayerStatsProvider,
+) -> None:
+    result = build_league_wide_player_week_fact_table(
+        [_week_one()], TEAMS_DF, PLAYERS_DF, league_wide_provider, SCORING_SETTINGS
+    )
+    df = result.player_week_df
+
+    assert list(df.columns[: len(PLAYER_WEEK_COLUMNS)]) == PLAYER_WEEK_COLUMNS
+    assert list(df.columns)[-1] == "fantasy_points"
+
+
+def test_league_wide_empty_weeks_list_yields_empty_frame(
+    league_wide_provider: FakePlayerStatsProvider,
+) -> None:
+    result = build_league_wide_player_week_fact_table(
+        [], TEAMS_DF, PLAYERS_DF, league_wide_provider, SCORING_SETTINGS
+    )
+
+    assert result.player_week_df.empty
+    assert list(result.player_week_df.columns[: len(PLAYER_WEEK_COLUMNS)]) == (
+        PLAYER_WEEK_COLUMNS
+    )
+
+
+def test_league_wide_unsupported_scoring_key_is_still_surfaced(
+    league_wide_provider: FakePlayerStatsProvider,
+) -> None:
+    result = build_league_wide_player_week_fact_table(
+        [_week_one()], TEAMS_DF, PLAYERS_DF, league_wide_provider, SCORING_SETTINGS
+    )
+
+    assert result.unsupported_scoring_keys == ["bonus_rec_te"]

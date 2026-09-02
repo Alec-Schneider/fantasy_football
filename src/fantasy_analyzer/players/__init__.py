@@ -91,6 +91,7 @@ from fantasy_analyzer.players.player_value import (
 from fantasy_analyzer.players.player_week import (
     PLAYER_WEEK_COLUMNS,
     PlayerWeekFactTable,
+    build_league_wide_player_week_fact_table,
     build_player_week_fact_table,
 )
 from fantasy_analyzer.players.points_allowed import (
@@ -148,6 +149,7 @@ __all__ = [
     "PLAYER_WEEK_COLUMNS",
     "PlayerWeekFactTable",
     "build_player_week_fact_table",
+    "build_league_wide_player_week_fact_table",
     "NflverseScheduleClient",
     "NFLVERSE_SCHEDULE_DEFAULT_CACHE_DIR",
     "load_games_cache",
