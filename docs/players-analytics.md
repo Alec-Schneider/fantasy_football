@@ -995,7 +995,7 @@ need no constructor argument beyond the ones that service already takes:
 it as a sixth tendency, but it requires a rostered player's **acquisition
 method** (draft/waiver/trade), which exists nowhere in any normalized
 dataset in this codebase today -- `SleeperClient.get_transactions` exists
-but nothing normalizes its output, and building that dataset (reconciling
+(see [`docs/sleeper.md`](sleeper.md)) but nothing normalizes its output, and building that dataset (reconciling
 `adds`/`drops` across transaction types, plus draft results, plus a caching
 strategy) is a Data/Software-Engineer-sized ticket in its own right, not a
 Data Scientist composition on top of already-normalized data. This module

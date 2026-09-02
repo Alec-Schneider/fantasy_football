@@ -1,8 +1,11 @@
 # The `league` layer
 
 This is page one of the `fantasy_analyzer` reference. It covers
-[`src/fantasy_analyzer/league/`](../src/fantasy_analyzer/league/) only. Later pages
-will cover `sleeper/`, `matchups/`, `analytics/`, and `players/`.
+[`src/fantasy_analyzer/league/`](../src/fantasy_analyzer/league/) only. For
+the raw Sleeper HTTP client this layer is built on -- `SleeperClient`, its
+exceptions, and the player-catalog cache -- see
+[`docs/sleeper.md`](sleeper.md). Later pages cover `matchups/`, `analytics/`,
+and `players/`.
 
 ## What this layer is for
 
@@ -46,8 +49,8 @@ from fantasy_analyzer.league import load_league_snapshot, derive_season_boundari
 client = SleeperClient()
 
 # 1. Look up your user_id, then list your leagues for a season, to find a
-#    league_id. (sleeper/ is next page's topic -- this is the minimum needed
-#    to get a league_id.)
+#    league_id. (see docs/sleeper.md for the full SleeperClient reference --
+#    this is the minimum needed to get a league_id.)
 user = client.get_user("YOUR_SLEEPER_USERNAME")
 leagues = client.get_leagues(user["user_id"], season=2025)
 league_id = leagues[0]["league_id"]  # pick the league you actually want
@@ -182,8 +185,10 @@ raw dicts/lists `SleeperClient.get_league`, `.get_users`, `.get_rosters`, and
 player catalog via
 [`get_players_cached`](../src/fantasy_analyzer/sleeper/cache.py#L64) (from
 `fantasy_analyzer.sleeper.cache`, cached at `.cache/sleeper/players.json` by
-default), and calls `build_league_snapshot`. Prefer `build_league_snapshot`
-directly in tests or when you already have the raw data.
+default -- see [`docs/sleeper.md`](sleeper.md#sleepercachepy----local-player-catalog-cache)
+for the cache's full behavior), and calls `build_league_snapshot`. Prefer
+`build_league_snapshot` directly in tests or when you already have the raw
+data.
 
 ### `league/teams.py` — who owns which roster
 

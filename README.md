@@ -3,10 +3,12 @@
 A lightweight Python analytics package for fantasy football leagues hosted on
 [Sleeper](https://sleeper.com). See `AGENTS.md` for the full project roadmap,
 architecture principles, and ticket-based workflow. API reference and usage
-guides live under [`docs/`](docs/): [`docs/league.md`](docs/league.md) (the
-`league/` layer), [`docs/matchups.md`](docs/matchups.md) (the `matchups/`
-layer), [`docs/analytics.md`](docs/analytics.md) (the `analytics/` layer),
-and the `players/` layer, split across [`docs/players-data.md`](docs/players-data.md)
+guides live under [`docs/`](docs/): [`docs/sleeper.md`](docs/sleeper.md) (the
+`sleeper/` layer -- the raw Sleeper HTTP client, exceptions, and player-catalog
+cache), [`docs/league.md`](docs/league.md) (the `league/` layer),
+[`docs/matchups.md`](docs/matchups.md) (the `matchups/` layer),
+[`docs/analytics.md`](docs/analytics.md) (the `analytics/` layer), and the
+`players/` layer, split across [`docs/players-data.md`](docs/players-data.md)
 (ingestion: nflverse, scoring, the player-week fact table) and
 [`docs/players-analytics.md`](docs/players-analytics.md) (performance,
 position strength, lineup efficiency, player value, matchup contribution,
