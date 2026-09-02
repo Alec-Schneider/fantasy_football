@@ -1,0 +1,77 @@
+{
+  "meta": {
+    "type": "Half-PPR",
+    "teams": 12,
+    "rounds": 15,
+    "total_drafts": 100,
+    "start_date": "2026-08-01",
+    "end_date": "2026-08-02"
+  },
+  "players": [
+    {
+      "player_id": 1,
+      "name": "Josh Allen",
+      "position": "QB",
+      "team": "BUF",
+      "adp": 10.0,
+      "adp_formatted": "1.10",
+      "times_drafted": 50,
+      "high": 5,
+      "low": 15,
+      "stdev": 3.0,
+      "bye": 7
+    },
+    {
+      "player_id": 2,
+      "name": "Michael Pittman Jr.",
+      "position": "WR",
+      "team": "IND",
+      "adp": 50.0,
+      "adp_formatted": "5.02",
+      "times_drafted": 40,
+      "high": 40,
+      "low": 60,
+      "stdev": 5.0,
+      "bye": 11
+    },
+    {
+      "player_id": 3,
+      "name": "Test Kicker",
+      "position": "PK",
+      "team": "DAL",
+      "adp": 180.0,
+      "adp_formatted": "15.12",
+      "times_drafted": 10,
+      "high": 170,
+      "low": 190,
+      "stdev": 8.0,
+      "bye": 7
+    },
+    {
+      "player_id": 4,
+      "name": "Seattle Defense",
+      "position": "DEF",
+      "team": "SEA",
+      "adp": 150.0,
+      "adp_formatted": "13.06",
+      "times_drafted": 20,
+      "high": 140,
+      "low": 160,
+      "stdev": 6.0,
+      "bye": 11
+    },
+    {
+      "player_id": 5,
+      "name": "No Match Player",
+      "position": "WR",
+      "team": "ZZZ",
+      "adp": 220.0,
+      "adp_formatted": "19.04",
+      "times_drafted": 5,
+      "high": 210,
+      "low": 230,
+      "stdev": 9.0,
+      "bye": 10
+    }
+  ]
+}
