@@ -45,6 +45,7 @@ from fantasy_analyzer.sleeper.exceptions import SleeperAPIError  # noqa: E402
 
 RANKING_REPORT_COLUMNS = [
     "league_rank",
+    "sleeper_player_id",
     "player_name",
     "position",
     "nfl_team",
