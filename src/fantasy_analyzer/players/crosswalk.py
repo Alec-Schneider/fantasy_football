@@ -61,6 +61,45 @@ silently allowing an ambiguous many-to-one mapping to reach
 key regardless). No sanitized fixture in this codebase currently exercises a
 genuine collision from live data; this policy exists to make the behavior
 well-defined if one is ever encountered.
+
+A second, more complete source: :func:`build_id_crosswalk_from_player_ids`
+--------------------------------------------------------------------------
+
+Sleeper's catalog ``gsis_id`` field is populated for only a minority of
+players -- verified directly while diagnosing a ranking-quality bug: as of
+this addition, roughly 32% of Sleeper's ~12,000-player catalog, and the
+gaps are not correlated with how good a player is (Justin Jefferson's own
+catalog entry has ``gsis_id: None``). :func:`build_id_crosswalk` run alone
+therefore silently drops most of the league, which starves
+``player_value.py``'s replacement-level computation of most of its intended
+comparison pool and distorts every VORP built on it -- most visibly once a
+league-wide (free-agent-inclusive) player pool is in play (see
+``player_week.py``'s ``build_league_wide_player_week_fact_table``), where a
+too-small, non-representative comparison pool can let a merely
+well-ID-mapped mediocre player look elite purely because most of his real
+competition was invisible.
+
+:func:`build_id_crosswalk_from_player_ids` builds the identical
+:data:`CROSSWALK_COLUMNS` shape from a different, more complete source:
+`DynastyProcess <https://github.com/dynastyprocess/data>`_'s
+``db_playerids.csv``, a community-maintained multi-platform ID crosswalk
+that, as of this addition, carries a populated ``sleeper_id`` for
+essentially its entire ~12,500-row table (verified directly). This is
+**still an explicit ID-to-ID join** -- AGENTS.md's "prefer immutable IDs
+over names" principle and this module's original no-fuzzy-matching stance
+both hold -- it is only the *source* of the explicit IDs that changes: from
+Sleeper's own sparse ``gsis_id`` field to a purpose-built, actively
+maintained crosswalk file. See ``id_crosswalk_client.py`` and
+``id_crosswalk_cache.py`` for the network/caching layer this function
+consumes, and that client module's docstring for the full investigation
+that motivated this addition (including why nflverse's own ``players``
+release, checked first, was not usable: it has no ``sleeper_id`` column).
+
+The original ``build_id_crosswalk`` is unchanged and remains the
+lighter-weight, single-source, no-extra-network-hop option -- callers who
+only need Sleeper's own rostered players resolved (rather than a
+league-wide free-agent-inclusive pool) may still prefer it, and every
+existing caller and test of it keeps working exactly as before.
 """
 
 from __future__ import annotations
@@ -111,6 +150,103 @@ def build_id_crosswalk(player_catalog: dict) -> pd.DataFrame:
 
     crosswalk = pd.DataFrame(rows, columns=CROSSWALK_COLUMNS)
     crosswalk = crosswalk.drop_duplicates(subset="gsis_id", keep="last")
+
+    return crosswalk.reset_index(drop=True)
+
+
+#: The DynastyProcess ``db_playerids.csv`` columns this normalizer reads,
+#: mapped to this codebase's :data:`CROSSWALK_COLUMNS`. Every other column
+#: the source carries (``mfl_id``, ``espn_id``, ``yahoo_id``, ...) is
+#: ignored -- this codebase has no use for platform IDs beyond Sleeper and
+#: nflverse's own ``gsis_id``.
+_PLAYER_IDS_SOURCE_COLUMNS = {
+    "sleeper_player_id": "sleeper_id",
+    "gsis_id": "gsis_id",
+    "full_name": "name",
+    "position": "position",
+    "team": "team",
+}
+
+
+def build_id_crosswalk_from_player_ids(player_ids: pd.DataFrame) -> pd.DataFrame:
+    """Build a Sleeper <-> nflverse ID crosswalk from DynastyProcess's ID table.
+
+    See the module docstring's "A second, more complete source" section for
+    why this exists alongside :func:`build_id_crosswalk` and why it is still
+    an explicit ID-to-ID join, not fuzzy matching.
+
+    Args:
+        player_ids: DynastyProcess's raw ``db_playerids.csv`` table, as
+            returned by
+            :meth:`~fantasy_analyzer.players.id_crosswalk_client.PlayerIdCrosswalkClient.download_player_ids`
+            (or a cached copy of it, e.g. via
+            :func:`~fantasy_analyzer.players.id_crosswalk_cache.get_player_ids_cached`).
+
+    Returns:
+        A DataFrame with columns :data:`CROSSWALK_COLUMNS`, one row per
+        source row with both a non-empty ``sleeper_id`` and a non-empty
+        ``gsis_id`` -- a row missing either cannot join anything this
+        codebase's ``sleeper_player_id``/``gsis_id`` keys need, so it
+        contributes no row, mirroring :func:`build_id_crosswalk`'s
+        "no usable ID, no row" convention. ``sleeper_player_id`` is cast to
+        ``str`` (the source stores it numerically; every Sleeper ID
+        elsewhere in this codebase is a string). If two source rows share a
+        ``gsis_id`` (or a ``sleeper_player_id``), only the last-encountered
+        one is kept -- the identical last-value-wins policy
+        :func:`build_id_crosswalk` documents for its own collision case, now
+        applied to both keys since either could in principle collide in a
+        third-party multi-platform table. An empty or wrong-shaped input
+        (missing one of :data:`_PLAYER_IDS_SOURCE_COLUMNS`' values) raises
+        ``ValueError`` naming the missing column(s), except an entirely
+        empty DataFrame (no rows, no columns), which returns an empty
+        crosswalk rather than raising -- matching
+        ``NflverseScheduleClient.download_games``'s "unreachable asset"
+        convention of an all-empty ``DataFrame`` for "no data available".
+
+    Raises:
+        ValueError: If a non-trivial ``player_ids`` frame is missing one of
+            the source columns :data:`_PLAYER_IDS_SOURCE_COLUMNS` names.
+    """
+    if player_ids.empty and not len(player_ids.columns):
+        return pd.DataFrame(columns=CROSSWALK_COLUMNS)
+
+    missing = [
+        source_column
+        for source_column in _PLAYER_IDS_SOURCE_COLUMNS.values()
+        if source_column not in player_ids.columns
+    ]
+    if missing:
+        raise ValueError(
+            "player_ids is missing expected column(s): "
+            + ", ".join(sorted(set(missing)))
+            + "; expected DynastyProcess's db_playerids.csv shape"
+        )
+
+    usable = player_ids[
+        player_ids["sleeper_id"].notna() & player_ids["gsis_id"].notna()
+    ]
+
+    # The source stores sleeper_id numerically (float64, since the raw
+    # column mixes real IDs with NaN for players it has no Sleeper match
+    # for); a naive str() cast would render "6794.0" instead of the "6794"
+    # Sleeper's own player_id strings use, silently breaking every join.
+    # ``usable`` has already dropped every NaN sleeper_id above, so this
+    # int cast is safe.
+    sleeper_ids = usable["sleeper_id"].astype("int64").astype(str)
+
+    crosswalk = pd.DataFrame(
+        {
+            output_column: (
+                sleeper_ids
+                if output_column == "sleeper_player_id"
+                else usable[source_column]
+            )
+            for output_column, source_column in _PLAYER_IDS_SOURCE_COLUMNS.items()
+        },
+        columns=CROSSWALK_COLUMNS,
+    )
+    crosswalk = crosswalk.drop_duplicates(subset="gsis_id", keep="last")
+    crosswalk = crosswalk.drop_duplicates(subset="sleeper_player_id", keep="last")
 
     return crosswalk.reset_index(drop=True)
 

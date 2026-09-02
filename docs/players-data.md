@@ -420,7 +420,11 @@ Index: []
 ### 2. nflverse ingestion: client, cache, provider (FFA-061)
 
 **Answers:** "where does real weekly player-stats data actually come from,
-and how is it cached locally."
+and how is it cached locally." (The sibling per-*game* schedule/score pull
+-- `nflverse_schedule_client.py` / `nflverse_schedule_cache.py`, needed for
+team-defense points-allowed -- follows the identical client/cache split but
+is covered in "Team-defense scoring inputs" (section 6 below), next to the
+`points_allowed.py` normalization step that actually consumes it.)
 
 **HTTP client --**
 [`players/nflverse_client.py`](../src/fantasy_analyzer/players/nflverse_client.py)
@@ -586,7 +590,9 @@ Module:
 **[`build_id_crosswalk(player_catalog: dict) -> pd.DataFrame`](../src/fantasy_analyzer/players/crosswalk.py#L74)**
 -- `player_catalog` is the raw Sleeper player catalog dict (keyed by
 `player_id`), e.g. from `SleeperClient.get_players()` (see
-[`docs/league.md`](league.md)). Returns
+[`docs/sleeper.md`](sleeper.md) for that method, and
+[`docs/league.md`](league.md) for how the same catalog feeds
+`LeagueSnapshot`). Returns
 [`CROSSWALK_COLUMNS`](../src/fantasy_analyzer/players/crosswalk.py#L71) =
 `["sleeper_player_id", "gsis_id", "full_name", "position", "team"]`, one row
 per Sleeper player with a **non-empty** `gsis_id`. A player with `gsis_id`
@@ -768,8 +774,57 @@ release is a **single cumulative** `games.csv` asset covering every season
 takes no `season` argument and the cache
 ([`DEFAULT_CACHE_DIR`](../src/fantasy_analyzer/players/nflverse_schedule_cache.py#L21)
 = `.cache/nflverse`, same directory as the per-player cache) is one file,
-`<cache_dir>/games.csv`. Same `load_games_cache`/`refresh_games_cache`/
-`get_games_cached` shape as section 2's per-season cache.
+`<cache_dir>/games.csv`. Same
+[`load_games_cache`](../src/fantasy_analyzer/players/nflverse_schedule_cache.py#L29)
+/
+[`refresh_games_cache`](../src/fantasy_analyzer/players/nflverse_schedule_cache.py#L46)
+/
+[`get_games_cached`](../src/fantasy_analyzer/players/nflverse_schedule_cache.py#L65)
+shape as section 2's per-season cache -- no time-to-live check here either,
+same reasoning.
+
+```python
+import pandas as pd
+from pathlib import Path
+from fantasy_analyzer.players.nflverse_schedule_cache import (
+    get_games_cached, load_games_cache,
+)
+
+class FakeNflverseScheduleClient:
+    """Stands in for NflverseScheduleClient -- no network, matches its shape."""
+    def __init__(self):
+        self.calls = 0
+    def download_games(self) -> pd.DataFrame:
+        self.calls += 1
+        return pd.DataFrame([{"season": 2025, "week": 1, "home_team": "BUF", "home_score": 41}])
+
+cache_dir = Path("/tmp/nflverse_schedule_cache_demo")
+client = FakeNflverseScheduleClient()
+
+print(load_games_cache(cache_dir))   # nothing cached yet -> None
+
+first = get_games_cached(client, cache_dir)   # downloads + writes
+print("calls after 1st get_games_cached:", client.calls)
+
+second = get_games_cached(client, cache_dir)  # reads cache
+print("calls after 2nd (cache hit):", client.calls)
+
+third = get_games_cached(client, cache_dir, force_refresh=True)
+print("calls after force_refresh=True:", client.calls)
+```
+
+**Verified offline** -- real output:
+
+```text
+None
+calls after 1st get_games_cached: 1
+calls after 2nd (cache hit): 1
+calls after force_refresh=True: 2
+```
+
+Identical cache-hit/miss/`force_refresh` behavior to section 2's
+`get_player_stats_cached` example, as expected from the shared
+`nflverse_cache.py`/`nflverse_schedule_cache.py` design.
 
 **[`normalize_points_allowed(games: pd.DataFrame) -> pd.DataFrame`](../src/fantasy_analyzer/players/points_allowed.py#L76)**
 filters nflverse's raw games table to **regular season only**

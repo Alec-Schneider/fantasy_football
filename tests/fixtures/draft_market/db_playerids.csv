@@ -1,0 +1,10 @@
+sleeper_id,gsis_id,fantasypros_id,name,position,team
+4984,00-0034857,1001,Josh Allen,QB,BUF
+5001,00-0055555,1002,Current Player,WR,NYJ
+9010,,,No Gsis Match,RB,KC
+,,,No Sleeper Match,WR,NYJ
+7000,00-0077000,,Michael Pittman,WR,IND
+,,,Michael Pittman,WR,FA
+6162,00-0061620,2001,Test Kicker,PK,DAL
+,,3001,Retired Guy,RB,FA
+8888,00-0088880,3001,Current Guy,RB,SF

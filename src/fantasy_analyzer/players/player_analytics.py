@@ -287,6 +287,12 @@ from fantasy_analyzer.players.performance import (
 from fantasy_analyzer.players.performance import (
     build_player_performance_metrics,
 )
+from fantasy_analyzer.players.player_rankings import (
+    DEFAULT_RANKING_WEIGHTS,
+    DEFAULT_RATE_SHRINKAGE_GAMES,
+    RankingWeights,
+    build_league_player_rankings,
+)
 from fantasy_analyzer.players.player_value import (
     build_player_value_metrics,
     build_position_scarcity_metrics,
@@ -338,6 +344,15 @@ class PlayerAnalytics:
             standard deviations, for :attr:`position_summary_df`'s boom/bust
             columns. Defaults to
             :data:`~fantasy_analyzer.players.position_strength.BOOM_BUST_THRESHOLD_STDEVS`.
+        ranking_weights: Blend weights for :attr:`player_ranking_df`'s
+            composite score. Defaults to
+            :data:`~fantasy_analyzer.players.player_rankings.DEFAULT_RANKING_WEIGHTS`.
+            Read its "Scarcity is deliberately double-counted" note before
+            relying on the default ``scarcity`` weight.
+        rate_shrinkage_games: Shrinkage constant ``k`` for
+            :attr:`player_ranking_df`'s rate component. Defaults to
+            :data:`~fantasy_analyzer.players.player_rankings.DEFAULT_RATE_SHRINKAGE_GAMES`;
+            ``0.0`` disables shrinkage exactly.
         season_matchup_df: FFA-033's
             :data:`~fantasy_analyzer.matchups.season_matchups.SEASON_MATCHUP_COLUMNS`-shaped
             frame for the same league-season and phase, as produced by
@@ -363,6 +378,8 @@ class PlayerAnalytics:
     player_boom_bust_threshold: float = PLAYER_BOOM_BUST_THRESHOLD_STDEVS
     position_boom_bust_threshold: float = POSITION_BOOM_BUST_THRESHOLD_STDEVS
     season_matchup_df: Optional[pd.DataFrame] = None
+    ranking_weights: RankingWeights = DEFAULT_RANKING_WEIGHTS
+    rate_shrinkage_games: float = DEFAULT_RATE_SHRINKAGE_GAMES
     player_season_df: pd.DataFrame = field(init=False)
 
     def __post_init__(self) -> None:
@@ -469,6 +486,38 @@ class PlayerAnalytics:
         """
         return build_position_scarcity_metrics(
             self.player_season_df, self.roster_positions, self.num_teams
+        )
+
+    @property
+    def player_ranking_df(self) -> pd.DataFrame:
+        """Return the league-wide composite player value ranking (FFA-073).
+
+        Thin passthrough to
+        :func:`~fantasy_analyzer.players.player_rankings.build_league_player_rankings`
+        over the eagerly built :attr:`player_season_df` (not an independent
+        rebuild) plus ``roster_positions``/``num_teams``, using
+        ``ranking_weights`` and ``rate_shrinkage_games``. Rebuilt on every
+        access -- see the module docstring's caching section.
+
+        This is **not** :attr:`player_value_df`'s ``value_rank``. That rank
+        is FFA-068's single-signal ordering by season
+        ``points_above_replacement``; this frame blends five z-scored
+        components (value, shrunk rate, reliability, upside, positional
+        scarcity) into one ``ranking_score``. See ``player_rankings.py`` for
+        every formula, the small-sample shrinkage rule, the
+        drop-and-renormalize handling of missing components, and -- before
+        reading the default ordering as a pure measure of realized points --
+        its "Scarcity is deliberately double-counted" section.
+
+        Only ``mode="retrospective"`` is reachable from here; the module's
+        ``mode="projected"`` seam awaits a real FFA-072 provider.
+        """
+        return build_league_player_rankings(
+            self.player_season_df,
+            self.roster_positions,
+            self.num_teams,
+            weights=self.ranking_weights,
+            rate_shrinkage_games=self.rate_shrinkage_games,
         )
 
     @property
@@ -608,6 +657,8 @@ def build_player_analytics(
     player_boom_bust_threshold: float = PLAYER_BOOM_BUST_THRESHOLD_STDEVS,
     position_boom_bust_threshold: float = POSITION_BOOM_BUST_THRESHOLD_STDEVS,
     season_matchup_df: Optional[pd.DataFrame] = None,
+    ranking_weights: RankingWeights = DEFAULT_RANKING_WEIGHTS,
+    rate_shrinkage_games: float = DEFAULT_RATE_SHRINKAGE_GAMES,
 ) -> PlayerAnalytics:
     """Build a :class:`PlayerAnalytics` from an already-built fact table.
 
@@ -639,6 +690,13 @@ def build_player_analytics(
             only by :attr:`~PlayerAnalytics.player_contribution_df` and
             :attr:`~PlayerAnalytics.positional_advantage_df`, which raise
             ``ValueError`` if it was omitted.
+        ranking_weights: Blend weights for
+            :attr:`~PlayerAnalytics.player_ranking_df`. Defaults to
+            :data:`~fantasy_analyzer.players.player_rankings.DEFAULT_RANKING_WEIGHTS`.
+        rate_shrinkage_games: Shrinkage constant for
+            :attr:`~PlayerAnalytics.player_ranking_df`'s rate component.
+            Defaults to
+            :data:`~fantasy_analyzer.players.player_rankings.DEFAULT_RATE_SHRINKAGE_GAMES`.
 
     Returns:
         A :class:`PlayerAnalytics` with its ``player_season_df`` already
@@ -651,4 +709,6 @@ def build_player_analytics(
         player_boom_bust_threshold=player_boom_bust_threshold,
         position_boom_bust_threshold=position_boom_bust_threshold,
         season_matchup_df=season_matchup_df,
+        ranking_weights=ranking_weights,
+        rate_shrinkage_games=rate_shrinkage_games,
     )

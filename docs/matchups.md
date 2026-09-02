@@ -5,6 +5,9 @@ This is page three of the `fantasy_analyzer` reference (see
 [`docs/analytics.md`](analytics.md) for page two, the `analytics/` layer
 that consumes this page's main output). It covers
 [`src/fantasy_analyzer/matchups/`](../src/fantasy_analyzer/matchups/) only.
+For the raw `SleeperClient.get_matchups`/`get_winners_bracket`/
+`get_losers_bracket` calls this layer's fetching wrappers sit on top of, see
+[`docs/sleeper.md`](sleeper.md).
 
 Conventions on this page (matching `docs/league.md` and `docs/analytics.md`):
 

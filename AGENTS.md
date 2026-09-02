@@ -432,9 +432,9 @@ Analytics tickets must additionally satisfy:
 
 - **FFA-060** — Define Player Data Provider Interface — DONE (`098cff1`) — see PROGRESS.md
 - **FFA-061** — Add nflverse Weekly Stat Provider — DONE (`635eff8`) — see PROGRESS.md
-- **FFA-062** — Build Sleeper to nflverse Player ID Crosswalk — DONE (`85058c4`) — see PROGRESS.md
+- **FFA-062** — Build Sleeper to nflverse Player ID Crosswalk — DONE (`85058c4`, extended with a DynastyProcess-backed source `FFA-074`) — see PROGRESS.md
 - **FFA-063** — Build League-Specific Fantasy Scoring Engine — DONE (`2513d33`) — see PROGRESS.md
-- **FFA-064** — Build Player-Week Fact Table — DONE (`a106cf9`) — see PROGRESS.md
+- **FFA-064** — Build Player-Week Fact Table — DONE (`a106cf9`, extended with a league-wide free-agent-inclusive builder `FFA-074`) — see PROGRESS.md
 - **FFA-065** — Player Performance Metrics — DONE (`60e6c9d`) — see PROGRESS.md
 - **FFA-066** — Position Strength Analytics — DONE (`0774b17`) — see PROGRESS.md
 - **FFA-067** — Optimal Lineup and Roster Efficiency — DONE (`e619eb7`) — see PROGRESS.md
@@ -443,6 +443,8 @@ Analytics tickets must additionally satisfy:
 - **FFA-072** — Projection and Ranking Provider Interface — DONE (`7d314af`) — see PROGRESS.md
 - **FFA-069** — Matchup Player Contribution Analysis — DONE (`3289bb0`) — see PROGRESS.md
 - **FFA-070** — Manager Lineup Tendencies — DONE (`1d6b98b`) — see PROGRESS.md
+- **FFA-073** — League-Wide Composite Player Value Ranking — DONE (`570429b`, rebalanced `32dbcaa`, wired `6629f59`) — see PROGRESS.md
+- **FFA-074** — League-Wide Free-Agent Player Pool & ID-Crosswalk Coverage Fix — DONE (`cf40276`, `8e357fa`, `7db0ba6`, `4d7f45f`) — see PROGRESS.md
 
 ---
 
@@ -480,7 +482,7 @@ V1 should answer:
 Tickets:
 
 ```text
-FFA-060 through FFA-072
+FFA-060 through FFA-074
 ```
 
 Adds:
@@ -491,6 +493,7 @@ Adds:
 - player value
 - matchup player contributions
 - manager tendencies
+- league-wide composite player ranking
 - future projection-provider support
 
 ---
@@ -598,7 +601,7 @@ None.
 
 ## DONE
 
-FFA-001 through FFA-057, FFA-060 through FFA-072 — see PROGRESS.md.
+FFA-001 through FFA-057, FFA-060 through FFA-074 — see PROGRESS.md.
 
 ---
 

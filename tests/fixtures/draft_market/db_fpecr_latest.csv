@@ -1,0 +1,14 @@
+page_type,player,id,pos,team,ecr,sd,best,worst,bye
+redraft-overall,Josh Allen,1001,QB,BUF,10.5,2.1,8,14,7
+redraft-overall,Current Player,1002,WR,NYJ,20.0,3.0,15,25,9
+redraft-overall,Current Guy,3001,RB,SF,30.0,4.0,25,35,11
+redraft-overall,Test Kicker,2001,K,DAL,180.0,10.0,170,190,7
+redraft-overall,Jacksonville Jaguars,,DST,JAC,150.0,8.0,140,160,7
+redraft-overall,Seattle Seahawks,,DST,SEA,155.0,8.5,145,165,11
+redraft-overall,No Fantasypros Match,9999,WR,XXX,200.0,5.0,190,210,10
+redraft-qb,Josh Allen,1001,QB,BUF,1.0,0.5,1,2,7
+redraft-dst,Jacksonville Jaguars,,DST,JAC,2.0,0.5,1,3,7
+redraft-dst,Seattle Seahawks,,DST,SEA,3.0,0.5,2,4,11
+redraft-k,Test Kicker,2001,K,DAL,4.0,0.5,3,5,7
+redraft-wr,Current Player,1002,WR,NYJ,5.0,0.5,4,6,9
+redraft-lb,Some Linebacker,,LB,BUF,1.0,0.2,1,1,7
