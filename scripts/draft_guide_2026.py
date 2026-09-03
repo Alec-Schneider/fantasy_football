@@ -208,6 +208,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="FFA-073 retrospective ranking CSV. Omitted => pure-market board.",
     )
     parser.add_argument(
+        "--roster-positions",
+        default=None,
+        help=(
+            "Comma-separated Sleeper roster_positions list for the VOR "
+            "replacement baseline (e.g. 'QB,RB,RB,WR,WR,TE,FLEX,FLEX,K,DEF,"
+            "BN,BN,BN,BN,BN'). Omitted => the default 1-QB/2-RB/2-WR/1-TE/"
+            "1-FLEX/K/DEF 12-team board. Must match --teams for a sensible "
+            "replacement level in a league whose lineup differs from that "
+            "default (extra FLEX, different team count, etc.)."
+        ),
+    )
+    parser.add_argument(
         "--exclude-id",
         action="append",
         default=[],
@@ -234,7 +246,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     prior = load_prior(args.prior_csv)
 
-    board = build_draft_board(market, prior, num_teams=args.teams)
+    roster_positions = (
+        [slot.strip() for slot in args.roster_positions.split(",") if slot.strip()]
+        if args.roster_positions
+        else None
+    )
+    board = build_draft_board(
+        market, prior, num_teams=args.teams, roster_positions=roster_positions
+    )
 
     if args.exclude_id:
         excluded = {str(pid) for pid in args.exclude_id}
