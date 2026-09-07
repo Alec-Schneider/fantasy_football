@@ -141,12 +141,15 @@ from fantasy_analyzer.league.draft import (
 )
 from fantasy_analyzer.league.snapshot import load_league_snapshot
 from fantasy_analyzer.players.draft_board import build_draft_board
-from fantasy_analyzer.players.draft_grade import (
-    SCORED_DRAFT_PICK_COLUMNS,
-    score_draft_picks,
-)
+from fantasy_analyzer.players.draft_grade import score_draft_picks
 from fantasy_analyzer.players.draft_market_cache import (
     get_draft_market_player_pool_cached,
+)
+from fantasy_analyzer.players.draft_points_value import (
+    POINTS_VALUE_PICK_COLUMNS,
+    PointsValueCurve,
+    fit_points_value_curve,
+    score_points_value,
 )
 from fantasy_analyzer.players.draft_report import (
     TEAM_DRAFT_GRADE_COLUMNS,
@@ -215,6 +218,142 @@ def _grade_badge_class(letter: Optional[str]) -> str:
     if letter in ("C+", "C"):
         return "grade-mid"
     return "grade-bad"
+
+
+def load_prior_draft(prior_draft_csv: Optional[Path]) -> Optional[pd.DataFrame]:
+    """Load a completed season's normalized draft-picks CSV (FFA-085), if any.
+
+    Unlike ``load_prior`` (required input to the draft board itself), this
+    is an optional enhancement: a missing/absent path returns ``None``
+    rather than raising, so a league without a fetched historical draft
+    still gets a full report -- just without the points-value columns
+    (:func:`~fantasy_analyzer.players.draft_points_value.
+    fit_points_value_curve` treats a ``None``/empty frame identically to
+    "no curve could be fit").
+
+    Args:
+        prior_draft_csv: Path to a ``fetch_season_draft_picks.py`` CSV, or
+            ``None``.
+
+    Returns:
+        The frame with ``sleeper_player_id`` as ``str``, or ``None`` when
+        no path was given or the file does not exist.
+    """
+    if prior_draft_csv is None:
+        return None
+    path = Path(prior_draft_csv)
+    if not path.exists():
+        return None
+    draft = pd.read_csv(path)
+    if "sleeper_player_id" in draft.columns:
+        draft["sleeper_player_id"] = draft["sleeper_player_id"].astype(str)
+    return draft
+
+
+#: Draft-phase labels, in draft order -- see ``_pick_phase``.
+_PHASE_LABELS = ("Early", "Mid", "Late")
+
+
+def _pick_phase(round_no: Any, num_rounds: int) -> Optional[str]:
+    """Bucket a 1-indexed ``round`` into the early/mid/late third of the draft.
+
+    A simple, league-size-agnostic split: round 1 of a 15-round draft and
+    round 1 of a 16-round draft both land in "Early" (fraction 0/15 vs
+    0/16, both ``< 1/3``). ``None`` if ``round_no``/``num_rounds`` is
+    missing or non-positive.
+    """
+    if round_no is None or pd.isna(round_no) or num_rounds <= 0:
+        return None
+    fraction = (int(round_no) - 1) / num_rounds
+    if fraction < 1 / 3:
+        return "Early"
+    if fraction < 2 / 3:
+        return "Mid"
+    return "Late"
+
+
+def build_points_value_team_summary(
+    points_value_df: pd.DataFrame, num_rounds: int
+) -> dict[Any, dict[str, Any]]:
+    """Per-team display aggregates answering "why is this grade what it is."
+
+    Pure presentation-layer aggregation of already-computed, already-tested
+    numbers (``draft_grade.py``'s ``pick_value`` and
+    ``draft_points_value.py``'s ``projected_points_value``/
+    ``pick_value_points``) -- not a new metric definition in its own right,
+    so it lives in the script layer rather than the core ``players``
+    package, the same "thin composition" convention this module's own
+    docstring already claims for the rest of its glue code.
+
+    For each ``roster_id`` present in ``points_value_df``:
+
+    - ``total_points_value``: sum of ``projected_points_value`` over every
+      pick with a defined value (keepers included -- this describes the
+      roster the team ended up with, not a draft-day decision, the same
+      distinction ``draft_grade.py`` draws for ``draft_score``/``tier`` on
+      a keeper row). ``None`` if no pick has a defined value.
+    - ``phases``: one entry per :data:`_PHASE_LABELS`, each
+      ``{"phase", "n", "avg_pick_value", "avg_pick_value_points"}`` --
+      restricted to the scoreable, non-excluded filter
+      ``draft_report.py``'s own module docstring defines (a keeper or an
+      unscored pick counts toward roster construction, not toward "was
+      this a good pick," the identical reasoning ``reach_count``/
+      ``value_count`` already use there). ``avg_pick_value``/
+      ``avg_pick_value_points`` are ``None`` for a phase with zero
+      contributing picks or with picks but no defined values in it.
+    """
+    totals: dict[Any, float] = {}
+    has_total: dict[Any, bool] = {}
+    phase_picks: dict[Any, dict[str, list[Any]]] = {}
+
+    for row in points_value_df.itertuples(index=False):
+        roster_id = row.roster_id
+        phase_picks.setdefault(roster_id, {label: [] for label in _PHASE_LABELS})
+
+        ppv = getattr(row, "projected_points_value", None)
+        if ppv is not None and not pd.isna(ppv):
+            totals[roster_id] = totals.get(roster_id, 0.0) + ppv
+            has_total[roster_id] = True
+
+        unscored = getattr(row, "expected_pick_source", None) == "unscored"
+        excluded = getattr(row, "excluded_reason", None) is not None
+        if unscored or excluded:
+            continue
+        phase = _pick_phase(getattr(row, "round", None), num_rounds)
+        if phase is None:
+            continue
+        phase_picks[roster_id][phase].append(row)
+
+    result: dict[Any, dict[str, Any]] = {}
+    for roster_id, phases_for_team in phase_picks.items():
+        phases: list[dict[str, Any]] = []
+        for label in _PHASE_LABELS:
+            picks = phases_for_team[label]
+            pv = [
+                p.pick_value
+                for p in picks
+                if p.pick_value is not None and not pd.isna(p.pick_value)
+            ]
+            pvp = [
+                p.pick_value_points
+                for p in picks
+                if p.pick_value_points is not None and not pd.isna(p.pick_value_points)
+            ]
+            phases.append(
+                {
+                    "phase": label,
+                    "n": len(picks),
+                    "avg_pick_value": (sum(pv) / len(pv)) if pv else None,
+                    "avg_pick_value_points": (sum(pvp) / len(pvp)) if pvp else None,
+                }
+            )
+        result[roster_id] = {
+            "total_points_value": (
+                totals.get(roster_id) if has_total.get(roster_id) else None
+            ),
+            "phases": phases,
+        }
+    return result
 
 
 def merge_team_grades_and_talking_points(
@@ -298,13 +437,59 @@ def _position_counts_html(position_counts: Any) -> str:
     return '<ul class="posbar">' + "".join(rows) + "</ul>"
 
 
-def build_team_card(row: dict[str, Any]) -> str:
+def _phase_breakdown_html(phases: Optional[list[dict[str, Any]]]) -> str:
+    """Render a team's early/mid/late round-phase value breakdown.
+
+    ``avg_pick_value_points`` (real, projected-points-scale) is the primary
+    number shown per phase -- this directly answers "which part of the
+    draft actually moved this team's projected scoring," the explanation
+    ``pick_value`` alone (a market-relative, not points-scale, number)
+    cannot give on its own. ``avg_pick_value`` (the board's own
+    market-relative scale) is shown as a smaller secondary figure.
+    """
+    if not phases:
+        return ""
+    rows = []
+    for phase in phases:
+        n = phase.get("n", 0)
+        pvp = phase.get("avg_pick_value_points")
+        pv = phase.get("avg_pick_value")
+        has_pvp = pvp is not None and not pd.isna(pvp)
+        cls = "up" if (has_pvp and pvp >= 0) else ("down" if has_pvp else "")
+        primary = _fmt(pvp, 1) if has_pvp else "—"
+        has_pv = pv is not None and not pd.isna(pv)
+        secondary = (
+            f' <span class="ph-sub">({_fmt(pv, 2)} board)</span>' if has_pv else ""
+        )
+        rows.append(
+            '<li><span class="ph-lbl">'
+            f'{html.escape(str(phase.get("phase", "")))}'
+            f'<span class="ph-n">{n} pk</span></span>'
+            f'<span class="ph-val {cls}">{primary}{secondary}</span></li>'
+        )
+    return (
+        '<div class="phase-breakdown">'
+        '<p class="phase-title">Value by draft phase '
+        '<span class="ph-hint">(proj. real-points value, avg/pick)</span></p>'
+        f'<ul class="phase-list">{"".join(rows)}</ul>'
+        "</div>"
+    )
+
+
+def build_team_card(
+    row: dict[str, Any], points_summary: Optional[dict[str, Any]] = None
+) -> str:
     """Render one team's grade card, including its commentary placeholder.
 
     The commentary paragraph is written as a literal
     ``{{COMMENTARY_ROSTER_<roster_id>}}`` token -- see the module
     docstring's FFA-083 section. It is emitted here, not filled in, because
     no prose is generated by this script.
+
+    ``points_summary`` is this team's entry from
+    :func:`build_points_value_team_summary` (``None`` when no points-value
+    curve could be fit for this league -- the card degrades gracefully,
+    simply omitting the points-value stat and phase breakdown).
     """
     roster_id = row["roster_id"]
     team_name = html.escape(str(row["team_name"]))
@@ -351,17 +536,25 @@ def build_team_card(row: dict[str, Any]) -> str:
     reach_stat = f'<b>{row.get("reach_count", "—")}</b>'
     value_stat = f'<b>{row.get("value_count", "—")}</b>'
     unscored_stat = f'<b>{row.get("unscored_pick_count", "—")}</b>'
-    body_parts.append(
-        '<div class="stat-row">'
-        f'<span class="stat">Total VOR<br>{total_vor_stat}</span>'
-        f'<span class="stat">Avg pick value<br>{avg_value_stat}</span>'
-        f'<span class="stat">Reaches<br>{reach_stat}</span>'
-        f'<span class="stat">Values<br>{value_stat}</span>'
-        f'<span class="stat">Unscored<br>{unscored_stat}</span>'
-        "</div>"
-    )
+    stat_spans = [
+        f'<span class="stat">Total VOR<br>{total_vor_stat}</span>',
+        f'<span class="stat">Avg pick value<br>{avg_value_stat}</span>',
+        f'<span class="stat">Reaches<br>{reach_stat}</span>',
+        f'<span class="stat">Values<br>{value_stat}</span>',
+        f'<span class="stat">Unscored<br>{unscored_stat}</span>',
+    ]
+    if points_summary is not None:
+        total_points_value = points_summary.get("total_points_value")
+        total_points_stat = f"<b>{_fmt(total_points_value, 1)}</b>"
+        stat_spans.append(
+            f'<span class="stat">Proj. pts value<br>{total_points_stat}</span>'
+        )
+    body_parts.append('<div class="stat-row">' + "".join(stat_spans) + "</div>")
 
     body_parts.append(_position_counts_html(row.get("position_counts")))
+
+    if points_summary is not None:
+        body_parts.append(_phase_breakdown_html(points_summary.get("phases")))
 
     body_parts.append(
         f'<p class="commentary" '
@@ -383,10 +576,15 @@ def build_team_card(row: dict[str, Any]) -> str:
     )
 
 
-def build_team_cards(merged_df: pd.DataFrame) -> str:
+def build_team_cards(
+    merged_df: pd.DataFrame,
+    points_summary_by_roster: Optional[dict[Any, dict[str, Any]]] = None,
+) -> str:
     """Render every team's card, in the frame's existing (ranked) order."""
+    points_summary_by_roster = points_summary_by_roster or {}
     return "\n".join(
-        build_team_card(row) for row in merged_df.to_dict(orient="records")
+        build_team_card(row, points_summary_by_roster.get(row["roster_id"]))
+        for row in merged_df.to_dict(orient="records")
     )
 
 
@@ -547,11 +745,23 @@ def run_one_league(
     talking_points = build_draft_talking_points(team_grades, scored_picks)
     merged = merge_team_grades_and_talking_points(team_grades, talking_points)
 
+    # FFA-085: a real-points-scale value curve, fit from this league's own
+    # prior completed season (its own draft + realized production). Purely
+    # additive -- curve=None (no prior_draft_csv, or too little history to
+    # fit) degrades every points-value figure to "not shown," it never
+    # blocks the FFA-078/079/080 grade itself.
+    prior_draft = load_prior_draft(cfg.get("prior_draft_csv"))
+    curve = (
+        fit_points_value_curve(prior_draft, prior) if prior_draft is not None else None
+    )
+    points_value = score_points_value(scored_picks, board, curve)
+    points_summary = build_points_value_team_summary(points_value, int(cfg["rounds"]))
+
     args.out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{cfg['out_prefix']}_{args.season}_draft_report"
 
     picks_path = args.out_dir / f"{stem}_picks_scored.csv"
-    scored_picks[SCORED_DRAFT_PICK_COLUMNS].to_csv(picks_path, index=False)
+    points_value[POINTS_VALUE_PICK_COLUMNS].to_csv(picks_path, index=False)
 
     grades_path = args.out_dir / f"{stem}_team_grades.csv"
     grades_out = merged.copy()
@@ -561,11 +771,17 @@ def run_one_league(
     grades_out.to_csv(grades_path, index=False)
 
     html_path = args.out_dir / f"{stem}_artifact.html"
-    html_path.write_text(_build_html(cfg, args, merged))
+    html_path.write_text(_build_html(cfg, args, merged, points_summary, curve))
 
+    curve_note = (
+        f", points curve n={curve.n_picks} r2={curve.r_squared:.2f}"
+        if curve is not None
+        else ", no points curve"
+    )
     print(
         f"{cfg['title']}: {len(scored_picks)} picks -> {picks_path}, "
         f"{len(merged)} teams -> {grades_path}, artifact -> {html_path}"
+        f"{curve_note}"
     )
 
     return {
@@ -582,7 +798,11 @@ def run_one_league(
 
 
 def _build_html(
-    cfg: dict[str, Any], args: argparse.Namespace, merged: pd.DataFrame
+    cfg: dict[str, Any],
+    args: argparse.Namespace,
+    merged: pd.DataFrame,
+    points_summary: Optional[dict[Any, dict[str, Any]]] = None,
+    curve: Optional[PointsValueCurve] = None,
 ) -> str:
     """Render the per-league artifact HTML page."""
     facts = [
@@ -602,6 +822,13 @@ def _build_html(
         "(FantasyFootballCalculator ADP + FantasyPros ECR) blended with "
         "this league's own 2025 retrospective value -- see draft_board.py."
     )
+    if curve is not None:
+        footer += (
+            f" Points value: a real-points curve fit from this league's own "
+            f"{curve.n_picks}-pick 2025 draft (R²={curve.r_squared:.2f} -- "
+            "a rough, single-season estimate, not a precise projection) -- "
+            "see draft_points_value.py."
+        )
 
     data = {
         "teams": [
@@ -626,7 +853,7 @@ def _build_html(
         .replace("{{HEADLINE}}", "Draft grade report")
         .replace("{{MAST_FACTS}}", mast_facts)
         .replace("{{FOOTER}}", html.escape(footer))
-        .replace("{{TEAM_CARDS}}", build_team_cards(merged))
+        .replace("{{TEAM_CARDS}}", build_team_cards(merged, points_summary))
         .replace("{{DATA}}", json.dumps(data))
     )
 

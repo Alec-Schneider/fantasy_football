@@ -154,6 +154,27 @@ h2{
   font-size:13.5px; color:var(--ink-2); font-style:italic; white-space:pre-wrap;
 }
 
+.phase-breakdown{margin:12px 0 0; padding-top:10px; border-top:1px solid var(--line)}
+.phase-title{
+  font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--ink-3); margin:0 0 6px;
+}
+.phase-title .ph-hint{text-transform:none; letter-spacing:0}
+.phase-list{list-style:none; margin:0; padding:0}
+.phase-list li{
+  display:grid; grid-template-columns:1fr auto; gap:8px; align-items:baseline;
+  margin-bottom:4px; font-size:12.5px;
+}
+.ph-lbl{color:var(--ink-2)}
+.ph-n{
+  font-family:"IBM Plex Mono",monospace; font-size:10.5px; color:var(--ink-3);
+  margin-left:6px;
+}
+.ph-val{font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums}
+.ph-val.up{color:var(--teal)}
+.ph-val.down{color:var(--clay)}
+.ph-sub{color:var(--ink-3); font-size:11px}
+
 /* ---------- overview bars (JS-rendered from DATA) ---------- */
 .overview{list-style:none; margin:0; padding:0}
 .overview li{
@@ -195,7 +216,7 @@ footer{
 
 <section>
   <h2>Team draft grades</h2>
-  <p class="sub">One card per team. <b>Commentary</b> paragraphs are placeholders left for a manual/agent narrative pass -- see the script's module docstring for the search-and-replace workflow.</p>
+  <p class="sub">One card per team. <b>Value by draft phase</b> breaks the grade down by early/mid/late round, in real projected points (fit from this league's own prior draft -- see the footer). <b>Commentary</b> paragraphs are placeholders left for a manual/agent narrative pass -- see the script's module docstring for the search-and-replace workflow.</p>
   <div class="grade-grid">
 {{TEAM_CARDS}}
   </div>

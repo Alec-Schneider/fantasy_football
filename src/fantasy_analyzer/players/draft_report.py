@@ -136,15 +136,25 @@ make that ticket's output depend on wording choices made in this one.
   only so the output never depends on iteration order. ``position_counts``
   groups a missing/``NaN`` position under the key ``"UNKNOWN"``.
 - ``reach_count``/``value_count`` use the scoreable, non-excluded filter
-  (this *is* a value-grading question) and a threshold parameterized by
-  ``num_teams`` -- one full round of the draft -- rather than a hardcoded
-  12: ``threshold = num_teams``, so for a 12-team league
-  ``|pick_value| > 12`` reads as "taken more than a full round earlier/later
-  than expected." ``reach_count`` counts picks with ``pick_value <
-  -threshold``; ``value_count`` counts picks with ``pick_value >
-  threshold``. A pick exactly at the threshold (``pick_value == threshold``
-  or ``== -threshold``) counts as neither -- the definition is strictly
-  "beyond" one round, not "at least" one round.
+  (this *is* a value-grading question) and a fixed threshold,
+  :data:`REACH_VALUE_THRESHOLD` (``0.30``). ``pick_value`` (FFA-078,
+  revised) is a *value-scale* quantity -- the drafted player's
+  ``draft_score`` minus the board's interpolated value curve at that pick
+  slot -- not a count of draft picks, so a "one full round" threshold (this
+  module's original, pre-revision definition, back when ``pick_value`` was
+  itself pick-count-scale) is no longer a unit match. ``0.30`` instead
+  reuses ``draft_board.py``'s own ``DEFAULT_TIER_GAP_THRESHOLD`` (not
+  imported -- see this module's "no private cross-module imports"
+  convention -- but numerically identical and documented as such): a
+  ``pick_value`` swing beyond it is, roughly, "at least one of this
+  board's own tiers' worth of surplus or shortfall relative to what the
+  slot typically returns," the same board-native, hand-explainable
+  standard ``draft_board.py`` already uses to decide when two players are
+  meaningfully different rather than noise. ``reach_count`` counts picks
+  with ``pick_value < -REACH_VALUE_THRESHOLD``; ``value_count`` counts
+  picks with ``pick_value > REACH_VALUE_THRESHOLD``. A pick exactly at the
+  threshold counts as neither -- the definition is strictly "beyond," not
+  "at least."
 
 Regular season vs. playoffs
 --------------------------------------------------------------------------
@@ -343,6 +353,14 @@ class DraftGradeWeights:
 
 #: Default blend weights -- see :class:`DraftGradeWeights`.
 DEFAULT_DRAFT_GRADE_WEIGHTS = DraftGradeWeights()
+
+#: ``|pick_value| `` threshold for ``reach_count``/``value_count`` in
+#: :func:`build_draft_talking_points`. Numerically identical to
+#: ``draft_board.py``'s ``DEFAULT_TIER_GAP_THRESHOLD`` -- see the module
+#: docstring's "Talking points" section for why that threshold, not a
+#: pick-count-based one, is the right unit now that ``pick_value`` is
+#: value-scale.
+REACH_VALUE_THRESHOLD = 0.30
 
 #: ``overall_z`` thresholds -> letter grade, checked highest-first. See the
 #: module docstring's "Team draft grade" table.
@@ -722,7 +740,7 @@ def build_draft_talking_points(
     for pick in scored_picks_df.itertuples(index=False):
         picks_by_roster.setdefault(getattr(pick, "roster_id", None), []).append(pick)
 
-    threshold = num_teams
+    threshold = REACH_VALUE_THRESHOLD
     for row in rows:
         picks = picks_by_roster.get(row["roster_id"], [])
 

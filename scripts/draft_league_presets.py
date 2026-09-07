@@ -23,6 +23,19 @@ Each preset's ``league_id`` below is that league's **2026-season** Sleeper
 deliberately a different ID from the 2025 one in ``prior_csv`` -- Sleeper
 mints a new ``league_id`` each season and links seasons via
 ``previous_league_id``.
+
+``prior_draft_csv`` (FFA-085)
+--------------------------------------------------------------------------
+
+Each preset's **2025-season** normalized draft picks (``pick_no``,
+``sleeper_player_id``, ``is_keeper``, ...), written by
+``scripts/fetch_season_draft_picks.py``. Joined against ``prior_csv``
+(that same 2025 season's realized ``points_above_replacement``) by
+:func:`~fantasy_analyzer.players.draft_points_value.fit_points_value_curve`
+to fit a real-points draft value curve -- see that module's docstring.
+Both files describe the *same* already-completed 2025 season and share the
+same 2025 ``league_id`` (embedded in both filenames), distinct from the
+2026 ``league_id`` below.
 """
 
 from __future__ import annotations
@@ -42,6 +55,9 @@ LEAGUES: dict[str, dict[str, Any]] = {
         "prior_csv": (
             "scripts/output/draft2026/NWC_FFL_2025_prior_1257477810625196032.csv"
         ),
+        "prior_draft_csv": (
+            "scripts/output/draft2026/NWC_FFL_2025_draft_1257477810625196032.csv"
+        ),
         "out_prefix": "NWC",
         # 2026-season league_id (2025's was 1257477810625196032).
         "league_id": "1389350137481932800",
@@ -57,6 +73,9 @@ LEAGUES: dict[str, dict[str, Any]] = {
         "prior_csv": (
             "scripts/output/draft2026/New_Wave_2025_prior_1260307567133859840.csv"
         ),
+        "prior_draft_csv": (
+            "scripts/output/draft2026/New_Wave_2025_draft_1260307567133859840.csv"
+        ),
         "out_prefix": "NewWave",
         # 2026-season league_id (2025's was 1260307567133859840).
         "league_id": "1389754945892274176",
@@ -71,6 +90,9 @@ LEAGUES: dict[str, dict[str, Any]] = {
         "roster_positions": "QB,RB,RB,WR,WR,TE,FLEX,FLEX,K,DEF,BN,BN,BN,BN,BN,BN",
         "prior_csv": (
             "scripts/output/draft2026/Zipline_2025_prior_1262800342051999744.csv"
+        ),
+        "prior_draft_csv": (
+            "scripts/output/draft2026/Zipline_2025_draft_1262800342051999744.csv"
         ),
         "out_prefix": "Zipline",
         # 2026-season league_id (2025's was 1262800342051999744).
