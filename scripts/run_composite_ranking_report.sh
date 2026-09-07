@@ -15,5 +15,6 @@ cd "$(dirname "$0")/.."
 .venv/bin/python scripts/composite_ranking_report.py \
   --league-id 1257477810625196032 --league-name "NWC_FFL_est_2011" \
   --league-id 1260307567133859840 --league-name "New_Wave_Friends_League" \
+  --league-id 1262800342051999744 --league-name "Just Here For The Zipline" \
   --out-dir scripts/output \
   --phase all
