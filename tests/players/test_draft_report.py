@@ -364,8 +364,9 @@ def test_talking_points_field_derivation_from_toy_example() -> None:
     assert _get_tp(1)["avg_pick_value_rank"] == pytest.approx(2.0)
     assert _get_tp(3)["avg_pick_value_rank"] == pytest.approx(1.0)
 
-    # threshold = num_teams = 4. team1 pick_value=5 > 4 -> value_count=1,
-    # reach_count=0. team3 pick_value=15 > 4 -> value_count=1, reach_count=0.
+    # threshold = REACH_VALUE_THRESHOLD = 0.30 (value-scale, not num_teams).
+    # team1 pick_value=5 > 0.30 -> value_count=1, reach_count=0.
+    # team3 pick_value=15 > 0.30 -> value_count=1, reach_count=0.
     assert _get_tp(1)["value_count"] == 1
     assert _get_tp(1)["reach_count"] == 0
     assert _get_tp(3)["value_count"] == 1
@@ -383,11 +384,12 @@ def test_talking_points_field_derivation_from_toy_example() -> None:
 
 
 def test_talking_points_zero_reach_and_zero_value() -> None:
-    # num_teams=2 -> threshold=2. pick_value=1 is within +/-2 for both teams.
+    # threshold = REACH_VALUE_THRESHOLD = 0.30. pick_value=0.1 is within
+    # +/-0.30 for both teams.
     picks = pd.DataFrame(
         [
-            _pick(1, "Team A", "pa", pick_no=10, vor=10.0, pick_value=1.0),
-            _pick(2, "Team B", "pb", pick_no=10, vor=-10.0, pick_value=-1.0),
+            _pick(1, "Team A", "pa", pick_no=10, vor=10.0, pick_value=0.1),
+            _pick(2, "Team B", "pb", pick_no=10, vor=-10.0, pick_value=-0.1),
         ]
     )
     grades = build_team_draft_grades(picks)

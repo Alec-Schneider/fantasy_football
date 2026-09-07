@@ -445,6 +445,9 @@ Analytics tickets must additionally satisfy:
 - **FFA-070** — Manager Lineup Tendencies — DONE (`1d6b98b`) — see PROGRESS.md
 - **FFA-073** — League-Wide Composite Player Value Ranking — DONE (`570429b`, rebalanced `32dbcaa`, wired `6629f59`) — see PROGRESS.md
 - **FFA-074** — League-Wide Free-Agent Player Pool & ID-Crosswalk Coverage Fix — DONE (`cf40276`, `8e357fa`, `7db0ba6`, `4d7f45f`) — see PROGRESS.md
+- **FFA-084** — Fix Draft Pick-Value Sign Bug and Convert to a Value Scale — DONE — see PROGRESS.md
+- **FFA-085** — Fitted Real-Points Draft Value Curve — DONE — see PROGRESS.md
+- **FFA-086** — Draft Report Phase-Breakdown and Points-Value Explanation — DONE — see PROGRESS.md
 
 ---
 
@@ -601,7 +604,7 @@ None.
 
 ## DONE
 
-FFA-001 through FFA-057, FFA-060 through FFA-074 — see PROGRESS.md.
+FFA-001 through FFA-057, FFA-060 through FFA-074, FFA-084 through FFA-086 — see PROGRESS.md.
 
 ---
 

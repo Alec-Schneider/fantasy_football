@@ -31,9 +31,11 @@ if str(SCRIPTS_DIR) not in sys.path:
 import draft_report_2026 as report_script  # noqa: E402
 
 import fantasy_analyzer.league.snapshot as snapshot_module  # noqa: E402
-from fantasy_analyzer.players.draft_grade import SCORED_DRAFT_PICK_COLUMNS  # noqa: E402
 from fantasy_analyzer.players.draft_market import (  # noqa: E402
     DRAFT_MARKET_POOL_COLUMNS,
+)
+from fantasy_analyzer.players.draft_points_value import (  # noqa: E402
+    POINTS_VALUE_PICK_COLUMNS,
 )
 from fantasy_analyzer.sleeper.client import SleeperClient  # noqa: E402
 
@@ -139,6 +141,9 @@ def _stub_market_and_prior(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda *args, **kwargs: _fake_market_df(),
     )
     monkeypatch.setattr(report_script, "load_prior", lambda prior_csv: None)
+    monkeypatch.setattr(
+        report_script, "load_prior_draft", lambda prior_draft_csv: None
+    )
 
 
 # -------------------------
@@ -212,7 +217,7 @@ def test_main_single_league_writes_expected_outputs(
     assert html_path.exists()
 
     picks_df = pd.read_csv(picks_path)
-    assert list(picks_df.columns) == SCORED_DRAFT_PICK_COLUMNS
+    assert list(picks_df.columns) == POINTS_VALUE_PICK_COLUMNS
     assert len(picks_df) == 3  # draft_picks.json fixture has 3 picks
 
     grades_df = pd.read_csv(grades_path)
@@ -242,6 +247,86 @@ def test_main_single_league_writes_expected_outputs(
     ]
     assert "total_vor" not in leaderboard_df.columns
     assert len(leaderboard_df) == 2
+
+
+def _historical_draft_frame() -> pd.DataFrame:
+    """A tiny, perfectly-fittable prior-season draft (FFA-085's toy curve)."""
+    rows = []
+    for player_id, pick_no in (("h1", 1), ("h2", 2), ("h4", 4), ("h8", 8)):
+        rows.append(
+            {
+                "season": 2025,
+                "league_id": "prior-league",
+                "draft_id": "prior-draft",
+                "round": 1,
+                "pick_no": pick_no,
+                "draft_slot": pick_no,
+                "roster_id": 1,
+                "owner_id": "owner1",
+                "team_name": "Prior Team",
+                "sleeper_player_id": player_id,
+                "player_name": player_id,
+                "position": "RB",
+                "nfl_team": "TST",
+                "is_keeper": None,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _historical_prior_frame() -> pd.DataFrame:
+    """Realized value paired with :func:`_historical_draft_frame` -- a
+    perfect ``points_above_replacement = 30 + b*ln(pick_no)`` fit."""
+    return pd.DataFrame(
+        [
+            {"sleeper_player_id": "h1", "points_above_replacement": 30.0},
+            {"sleeper_player_id": "h2", "points_above_replacement": 20.0},
+            {"sleeper_player_id": "h4", "points_above_replacement": 10.0},
+            {"sleeper_player_id": "h8", "points_above_replacement": 0.0},
+        ]
+    )
+
+
+def test_main_single_league_wires_points_value_curve_when_prior_draft_available(
+    tmp_path: Path,
+    load_sleeper_fixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FFA-085: with both a prior-season draft and prior ranking supplied,
+    the points-value curve is fit and flows through to the picks CSV and
+    the HTML report's phase-breakdown section.
+    """
+    monkeypatch.setattr(
+        report_script,
+        "load_prior_draft",
+        lambda prior_draft_csv: _historical_draft_frame(),
+    )
+    monkeypatch.setattr(
+        report_script, "load_prior", lambda prior_csv: _historical_prior_frame()
+    )
+
+    league_id = "111111111111111111"
+    with requests_mock_lib.Mocker() as m:
+        _mock_draft_endpoints(m, load_sleeper_fixture, league_id)
+        exit_code = report_script.main(
+            [
+                "--league", "nwc", "--league-id", league_id,
+                "--out-dir", str(tmp_path),
+            ]
+        )
+    assert exit_code == 0
+
+    picks_df = pd.read_csv(f"{tmp_path}/NWC_2026_draft_report_picks_scored.csv")
+    assert list(picks_df.columns) == POINTS_VALUE_PICK_COLUMNS
+    # Every drafted player has a real board draft_rank (the fake market
+    # pool covers all three), so every pick should get a real projection.
+    assert picks_df["projected_points_value"].notna().all()
+    assert picks_df["expected_points_value_at_pick"].notna().all()
+
+    html_text = (tmp_path / "NWC_2026_draft_report_artifact.html").read_text()
+    assert "Value by draft phase" in html_text
+    assert "Proj. pts value" in html_text
+    assert "points curve" in html_text  # footer note with n/R²
 
 
 # -------------------------
