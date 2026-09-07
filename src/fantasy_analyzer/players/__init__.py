@@ -55,6 +55,13 @@ from fantasy_analyzer.players.draft_market_client import (
     FantasyProsEcrClient,
     FfcAdpClient,
 )
+from fantasy_analyzer.players.draft_points_value import (
+    DEFAULT_POINTS_CURVE_EXCLUDED_POSITIONS,
+    POINTS_VALUE_PICK_COLUMNS,
+    PointsValueCurve,
+    fit_points_value_curve,
+    score_points_value,
+)
 from fantasy_analyzer.players.draft_report import (
     DEFAULT_DRAFT_GRADE_WEIGHTS,
     DRAFT_TALKING_POINT_COLUMNS,
@@ -237,6 +244,11 @@ __all__ = [
     "validate_draft_market_columns",
     "FfcAdpClient",
     "FantasyProsEcrClient",
+    "DEFAULT_POINTS_CURVE_EXCLUDED_POSITIONS",
+    "POINTS_VALUE_PICK_COLUMNS",
+    "PointsValueCurve",
+    "fit_points_value_curve",
+    "score_points_value",
     "DRAFT_MARKET_DEFAULT_CACHE_DIR",
     "load_ffc_adp_cache",
     "refresh_ffc_adp_cache",

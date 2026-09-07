@@ -117,3 +117,6 @@ lineup- and league-size-specific, not a generic positional cutoff.
 - **FFA-075** -- 2026 draft market data (ADP + ECR ingestion).
 - **FFA-076** -- 2026 draft board (this artifact): market + retrospective
   blend.
+- **FFA-077 through FFA-086** -- Post-draft grading and points-value analysis:
+  see [`docs/draft-grade-2026.md`](draft-grade-2026.md) for the sequel that
+  grades how teams actually drafted against this board.
