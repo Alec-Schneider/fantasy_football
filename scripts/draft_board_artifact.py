@@ -40,6 +40,15 @@ from pathlib import Path
 from typing import Any, Optional, Sequence
 
 import pandas as pd
+from draft_guide_2026 import (  # noqa: E402  (sibling script, same directory)
+    GUIDE_REPORT_COLUMNS,
+    STREAM_POSITION_LAST_ROUNDS,
+    STREAM_POSITIONS,
+    load_prior,
+    snake_picks,
+    summarize_pick,
+)
+from draft_league_presets import LEAGUES  # noqa: E402  (sibling script, same directory)
 
 from fantasy_analyzer.players.draft_board import (
     build_draft_board,
@@ -49,60 +58,12 @@ from fantasy_analyzer.players.draft_market_cache import (
     get_draft_market_player_pool_cached,
 )
 
-from draft_guide_2026 import (  # noqa: E402  (sibling script, same directory)
-    STREAM_POSITIONS,
-    STREAM_POSITION_LAST_ROUNDS,
-    GUIDE_REPORT_COLUMNS,
-    load_prior,
-    snake_picks,
-    summarize_pick,
-)
-
 TEMPLATE_PATH = Path(__file__).parent / "templates" / "draft_board_artifact.html.tpl"
 
 #: Positions that get a value-cliff panel, in display order. K/DEF are
 #: omitted deliberately: they are market-only (see :data:`NOTE_STREAMERS`)
 #: and streamed rather than reached for.
 CLIFF_POSITIONS = ["RB", "WR", "TE", "QB"]
-
-#: Known leagues, keyed by CLI slug. Values mirror
-#: ``scripts/draft_guide_2026_league.sh`` -- all confirmed against Sleeper's
-#: 2026 league settings.
-LEAGUES: dict[str, dict[str, Any]] = {
-    "nwc": {
-        "title": "NWC FFL, est. 2011",
-        "short_title": "NWC FFL",
-        "teams": 12,
-        "rounds": 16,
-        "scoring": "half-ppr",
-        "scoring_label": "Half PPR",
-        "roster_positions": "QB,RB,RB,WR,WR,TE,FLEX,K,DEF,BN,BN,BN,BN,BN,BN,BN",
-        "prior_csv": "scripts/output/draft2026/NWC_FFL_2025_prior_1257477810625196032.csv",
-        "out_prefix": "NWC",
-    },
-    "new-wave": {
-        "title": "New Wave Friends League",
-        "short_title": "New Wave",
-        "teams": 10,
-        "rounds": 15,
-        "scoring": "ppr",
-        "scoring_label": "Full PPR",
-        "roster_positions": "QB,RB,RB,WR,WR,TE,FLEX,FLEX,K,DEF,BN,BN,BN,BN,BN",
-        "prior_csv": "scripts/output/draft2026/New_Wave_2025_prior_1260307567133859840.csv",
-        "out_prefix": "NewWave",
-    },
-    "zipline": {
-        "title": "Just Here For The Zipline",
-        "short_title": "Zipline",
-        "teams": 10,
-        "rounds": 16,
-        "scoring": "half-ppr",
-        "scoring_label": "Half PPR",
-        "roster_positions": "QB,RB,RB,WR,WR,TE,FLEX,FLEX,K,DEF,BN,BN,BN,BN,BN,BN",
-        "prior_csv": "scripts/output/draft2026/Zipline_2025_prior_1262800342051999744.csv",
-        "out_prefix": "Zipline",
-    },
-}
 
 _ORDINALS = {
     1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth", 6: "sixth",
@@ -420,7 +381,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=[],
         help="Sleeper player_id to remove from the board (keepers). Repeatable.",
     )
-    parser.add_argument("--out-dir", type=Path, default=Path("scripts/output/draft2026"))
+    parser.add_argument(
+        "--out-dir", type=Path, default=Path("scripts/output/draft2026")
+    )
     parser.add_argument("--out-prefix", default=None)
     parser.add_argument("--no-market-refresh", action="store_true")
     return parser

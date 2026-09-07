@@ -20,6 +20,10 @@ from fantasy_analyzer.players.draft_board import (
     build_pick_availability_table,
     pick_availability_probability,
 )
+from fantasy_analyzer.players.draft_grade import (
+    SCORED_DRAFT_PICK_COLUMNS,
+    score_draft_picks,
+)
 from fantasy_analyzer.players.draft_market import (
     DRAFT_MARKET_COLUMNS,
     DRAFT_MARKET_POOL_COLUMNS,
@@ -50,6 +54,14 @@ from fantasy_analyzer.players.draft_market_cache import (
 from fantasy_analyzer.players.draft_market_client import (
     FantasyProsEcrClient,
     FfcAdpClient,
+)
+from fantasy_analyzer.players.draft_report import (
+    DEFAULT_DRAFT_GRADE_WEIGHTS,
+    DRAFT_TALKING_POINT_COLUMNS,
+    TEAM_DRAFT_GRADE_COLUMNS,
+    DraftGradeWeights,
+    build_draft_talking_points,
+    build_team_draft_grades,
 )
 from fantasy_analyzer.players.id_crosswalk_cache import (
     DEFAULT_CACHE_DIR as ID_CROSSWALK_DEFAULT_CACHE_DIR,
@@ -209,6 +221,8 @@ __all__ = [
     "build_draft_board",
     "pick_availability_probability",
     "build_pick_availability_table",
+    "SCORED_DRAFT_PICK_COLUMNS",
+    "score_draft_picks",
     "DRAFT_MARKET_COLUMNS",
     "DRAFT_MARKET_POOL_COLUMNS",
     "FFC_ADP_SOURCE",
@@ -232,6 +246,12 @@ __all__ = [
     "get_fpecr_cached",
     "get_draft_market_cached",
     "get_draft_market_player_pool_cached",
+    "TEAM_DRAFT_GRADE_COLUMNS",
+    "DRAFT_TALKING_POINT_COLUMNS",
+    "DraftGradeWeights",
+    "DEFAULT_DRAFT_GRADE_WEIGHTS",
+    "build_team_draft_grades",
+    "build_draft_talking_points",
     "PlayerIdCrosswalkClient",
     "ID_CROSSWALK_DEFAULT_CACHE_DIR",
     "load_player_ids_cache",
