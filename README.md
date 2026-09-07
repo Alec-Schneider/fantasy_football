@@ -12,7 +12,10 @@ cache), [`docs/league.md`](docs/league.md) (the `league/` layer),
 (ingestion: nflverse, scoring, the player-week fact table) and
 [`docs/players-analytics.md`](docs/players-analytics.md) (performance,
 position strength, lineup efficiency, player value, matchup contribution,
-lineup tendencies, and the league-wide composite player ranking).
+lineup tendencies, and the league-wide composite player ranking). For
+2026-specific draft analysis, see [`docs/draft-board-2026.md`](docs/draft-board-2026.md)
+(pre-draft ranking and availability) and [`docs/draft-grade-2026.md`](docs/draft-grade-2026.md)
+(post-draft grading and value analysis).
 
 The initial development and validation season is **2025**, using the Sleeper
 username `schneidbaby` as the primary development account. The application is
