@@ -204,6 +204,15 @@ from fantasy_analyzer.players.ros_backtest import (
     score_baselines,
     score_ros_predictions,
 )
+from fantasy_analyzer.players.ros_projection import (
+    DEFAULT_N0,
+    PROJECTION_COLUMN,
+    ShrinkageParameters,
+    add_ros_projection,
+    fit_shrinkage,
+    project_ppg,
+    run_shrinkage_backtest,
+)
 from fantasy_analyzer.players.scoring import (
     SCORING_KEY_TO_STAT_COLUMNS,
     ScoringResult,
@@ -227,6 +236,13 @@ __all__ = [
     "score_baselines",
     "filter_to_waiver_population",
     "run_ros_backtest",
+    "PROJECTION_COLUMN",
+    "DEFAULT_N0",
+    "ShrinkageParameters",
+    "project_ppg",
+    "add_ros_projection",
+    "fit_shrinkage",
+    "run_shrinkage_backtest",
     "NflverseClient",
     "NflverseWeeklyStatsProvider",
     "RAW_STAT_COLUMNS",
