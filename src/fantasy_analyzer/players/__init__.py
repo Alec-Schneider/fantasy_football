@@ -122,6 +122,7 @@ from fantasy_analyzer.players.nflverse_defense import (
     build_team_defense_stats,
 )
 from fantasy_analyzer.players.nflverse_provider import (
+    OPPORTUNITY_COLUMNS,
     RAW_STAT_COLUMNS,
     NflverseWeeklyStatsProvider,
     normalize_player_stats,
@@ -207,6 +208,7 @@ __all__ = [
     "NflverseClient",
     "NflverseWeeklyStatsProvider",
     "RAW_STAT_COLUMNS",
+    "OPPORTUNITY_COLUMNS",
     "normalize_player_stats",
     "NFLVERSE_DEFAULT_CACHE_DIR",
     "load_player_stats_cache",

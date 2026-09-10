@@ -20,11 +20,13 @@ from fantasy_analyzer.players import PLAYER_WEEK_IDENTITY_COLUMNS, PlayerStatsPr
 from fantasy_analyzer.players.crosswalk import build_id_crosswalk
 from fantasy_analyzer.players.nflverse_client import NflverseClient
 from fantasy_analyzer.players.nflverse_provider import (
+    OPPORTUNITY_COLUMNS,
     RAW_STAT_COLUMNS,
     NflverseWeeklyStatsProvider,
     normalize_player_stats,
 )
 from fantasy_analyzer.players.provider import validate_player_week_columns
+from fantasy_analyzer.players.scoring import SCORING_KEY_TO_STAT_COLUMNS
 
 SEASON = 2025
 
@@ -368,3 +370,87 @@ def test_provider_weekly_stats_empty_for_an_unpublished_season(
 
     assert result.empty
     validate_player_week_columns(result)
+
+
+def test_normalize_passes_through_opportunity_columns(
+    raw_stats: pd.DataFrame,
+) -> None:
+    """FFA-087: usage shares and rates survive normalization.
+
+    Ja'Marr Chase is the hand-checkable case. The fixture gives him a
+    ``target_share`` of 0.25 and an ``air_yards_share`` of 0.40, so
+    nflverse's ``wopr = 1.5 * target_share + 0.7 * air_yards_share``
+    = 1.5 * 0.25 + 0.7 * 0.40 = 0.375 + 0.28 = 0.655, and his
+    ``racr = receiving_yards / receiving_air_yards`` = 120 / 150 = 0.8.
+    Both are asserted at those hand-computed values.
+    """
+    result = normalize_player_stats(raw_stats, season=2025, week=2)
+    chase = result[result["player_name"] == "Ja'Marr Chase"].iloc[0]
+
+    assert chase["target_share"] == pytest.approx(0.25)
+    assert chase["air_yards_share"] == pytest.approx(0.40)
+    assert chase["wopr"] == pytest.approx(1.5 * 0.25 + 0.7 * 0.40)
+    assert chase["racr"] == pytest.approx(120 / 150)
+    assert chase["receiving_air_yards"] == pytest.approx(150.0)
+    assert chase["receiving_epa"] == pytest.approx(6.4)
+
+    for column in OPPORTUNITY_COLUMNS:
+        assert column in result.columns
+
+
+def test_opportunity_columns_follow_raw_stat_columns(
+    raw_stats: pd.DataFrame,
+) -> None:
+    """The documented column order: identity, then stats, then opportunity."""
+    result = normalize_player_stats(raw_stats, season=2025, week=2)
+    columns = list(result.columns)
+
+    assert columns[: len(PLAYER_WEEK_IDENTITY_COLUMNS)] == PLAYER_WEEK_IDENTITY_COLUMNS
+    last_stat = max(columns.index(column) for column in RAW_STAT_COLUMNS)
+    first_opportunity = min(columns.index(column) for column in OPPORTUNITY_COLUMNS)
+    assert last_stat < first_opportunity
+
+
+def test_opportunity_columns_are_not_scoreable(raw_stats: pd.DataFrame) -> None:
+    """No opportunity column is reachable from a Sleeper scoring key.
+
+    The two lists are deliberately separate (see the provider module
+    docstring): ``RAW_STAT_COLUMNS`` is ``scoring.py``'s domain, and a
+    share or a rate must never be multiplied by a scoring rule.
+    """
+    scoreable = {
+        column
+        for columns in SCORING_KEY_TO_STAT_COLUMNS.values()
+        for column in columns
+    }
+    assert not scoreable & set(OPPORTUNITY_COLUMNS)
+
+
+def test_opportunity_columns_may_be_missing_per_player(
+    raw_stats: pd.DataFrame,
+) -> None:
+    """A kicker has no usage share; those cells are null, not zero."""
+    result = normalize_player_stats(raw_stats, season=2025, week=1)
+    booter = result[result["player_name"] == "Kris Booter"].iloc[0]
+
+    assert pd.isna(booter["target_share"])
+    assert pd.isna(booter["wopr"])
+
+    # A zero share is a real, distinct value from a missing one.
+    rookie = result[result["player_name"] == "Some Rookie"].iloc[0]
+    assert rookie["target_share"] == 0.0
+    assert rookie["wopr"] == 0.0
+
+
+def test_normalize_tolerates_a_feed_without_opportunity_columns(
+    raw_stats: pd.DataFrame,
+) -> None:
+    """Older nflverse schemas lack these columns; that is not an error."""
+    trimmed = raw_stats.drop(columns=OPPORTUNITY_COLUMNS)
+    result = normalize_player_stats(trimmed, season=2025, week=2)
+
+    assert len(result) == 1
+    for column in OPPORTUNITY_COLUMNS:
+        assert column not in result.columns
+    # The scoreable stats are unaffected.
+    assert result.iloc[0]["receiving_yards"] == 120

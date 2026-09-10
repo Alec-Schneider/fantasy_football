@@ -72,9 +72,42 @@ two-point conversions, and kicking stats (field-goal-distance bands and
 extra points) likely to matter for a league's scoring rules. Deliberately
 excluded: nflverse's own ``fantasy_points``/``fantasy_points_ppr`` columns
 (computing fantasy points from a league's actual scoring settings is
-FFA-063's job, not this provider's), and advanced/efficiency metrics
-(``passing_epa``, ``racr``, ``dakota``, target/air-yards shares, etc.)
-that are out of scope for a raw per-stat pass-through.
+FFA-063's job, not this provider's), and ``dakota``, which is a
+quarterback-only composite with no use in this codebase.
+
+Opportunity columns
+--------------------
+
+:data:`OPPORTUNITY_COLUMNS` carries a second, separate block of columns
+appended after :data:`RAW_STAT_COLUMNS`: usage shares (``target_share``,
+``air_yards_share``, ``wopr``), efficiency rates (``racr``, ``pacr``), raw
+air yards, and the per-phase EPA columns.
+
+These are passed through because *opportunity is the most predictive
+forward-looking signal nflverse publishes*, and any projection built on
+this codebase needs them. Measured on the local 1999-2024 cache
+(RB/WR/TE season aggregates, 8+ games, 2014-2024, n=1956), year-over-year
+correlation is 0.85 for ``wopr`` and 0.79 for ``target_share``, against
+0.31 for yards per target -- volume persists, efficiency does not.
+
+They are a **separate list from** :data:`RAW_STAT_COLUMNS`, not an
+extension of it, for one reason: ``RAW_STAT_COLUMNS`` is the documented
+domain of ``scoring.py``'s
+:data:`~fantasy_analyzer.players.scoring.SCORING_KEY_TO_STAT_COLUMNS`
+mapping, whose entries are all *counting* stats a Sleeper scoring rule can
+multiply. A share or a rate is not scoreable, and must not be reachable
+from that mapping. Keeping the lists distinct makes that boundary explicit
+rather than relying on nobody adding a scoring key that happens to name a
+rate column.
+
+Downstream, these columns need no other change: ``player_week.py``'s
+``_finalize_fact_table`` treats every non-identity column the provider
+supplies as a pass-through stat column, so they flow into
+``player_week_df`` automatically. They do not shift
+``performance.py``'s games-played mask, which counts a row as played when
+*any* stat column is non-null -- verified against the cached 2025 season,
+where all 19,422 rows already carry at least one non-null counting stat,
+so the mask is unchanged by their addition.
 
 The current release also carries individual-level defensive stats
 (``def_sacks``, ``def_interceptions``, ``def_tds``, etc.) and points
@@ -156,6 +189,23 @@ RAW_STAT_COLUMNS = [
     "pat_missed",
 ]
 
+#: Raw nflverse *opportunity* and efficiency-rate columns passed through
+#: after :data:`RAW_STAT_COLUMNS`. See the module docstring's "Opportunity
+#: columns" section for why these are a separate list rather than an
+#: extension of ``RAW_STAT_COLUMNS``.
+OPPORTUNITY_COLUMNS = [
+    "target_share",
+    "air_yards_share",
+    "wopr",
+    "racr",
+    "pacr",
+    "receiving_air_yards",
+    "passing_air_yards",
+    "passing_epa",
+    "rushing_epa",
+    "receiving_epa",
+]
+
 
 def normalize_player_stats(
     raw: pd.DataFrame,
@@ -186,7 +236,8 @@ def normalize_player_stats(
     Returns:
         A DataFrame whose columns begin with
         :data:`~fantasy_analyzer.players.provider.PLAYER_WEEK_IDENTITY_COLUMNS`,
-        followed by :data:`RAW_STAT_COLUMNS` (only those present in
+        followed by :data:`RAW_STAT_COLUMNS` then
+        :data:`OPPORTUNITY_COLUMNS` (in each case only those present in
         ``raw``). Empty (same columns, zero rows) if no row in ``raw``
         matches ``season``/``week`` -- including when ``raw`` itself is
         missing the ``season``/``week`` columns entirely, which is treated
@@ -215,7 +266,7 @@ def normalize_player_stats(
 
     result = result[PLAYER_WEEK_IDENTITY_COLUMNS]
 
-    for stat_column in RAW_STAT_COLUMNS:
+    for stat_column in RAW_STAT_COLUMNS + OPPORTUNITY_COLUMNS:
         if stat_column in matched.columns:
             result[stat_column] = matched[stat_column]
 
