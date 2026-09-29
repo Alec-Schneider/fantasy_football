@@ -129,6 +129,57 @@ from fantasy_analyzer.players.scoring import calculate_fantasy_points
 #: rest-of-season target. See the module docstring for why week 18 is out.
 DEFAULT_SEASON_END_WEEK = 17
 
+#: Per-week usage/efficiency columns :func:`build_scored_player_weeks`
+#: carries through onto its output when the input frame has them (FFA-098).
+#:
+#: Every one of these is *opportunity*, not production: how often the player
+#: was thrown to or handed the ball, what share of his offense that was, and
+#: how efficient the result was per play. They exist on the scored frame so
+#: downstream consumers (notably
+#: :func:`~fantasy_analyzer.players.waiver_rankings.build_waiver_wire_rankings`)
+#: can show *why* a projection looks the way it does -- a one-game waiver
+#: spike on two targets and a long touchdown and a one-game spike on eleven
+#: targets are the same ``fantasy_points`` and completely different bets.
+#: This is the concrete answer to the "touchdown trap" named in
+#: :mod:`fantasy_analyzer.players.ros_projection`'s docstring: that module
+#: prices a player on points, so a consumer needs the usage columns beside
+#: the projection to see when the points were touchdown-driven.
+#:
+#: The first ten mirror
+#: :data:`~fantasy_analyzer.players.nflverse_provider.OPPORTUNITY_COLUMNS`
+#: exactly (asserted by a test, so the two cannot drift apart); ``targets``
+#: and ``carries`` are raw volume counts this module has always carried.
+#: nflverse's weekly player stats carry **no snap counts**, so no
+#: snap-share column is available at any stage of this pipeline.
+#: Per-week *context* columns :func:`build_scored_player_weeks` carries
+#: through when present (FFA-099): which NFL team the player was on that
+#: week, and which defense he faced.
+#:
+#: These are not stats and play no part in any projection. They exist so a
+#: consumer can group realized points by the defense that allowed them --
+#: the only way to build a defense-vs-position table from a player-week
+#: frame. See :mod:`fantasy_analyzer.players.opponent_strength`.
+#:
+#: ``opponent_team`` is populated by nflverse only for **completed** weeks.
+#: A future week's opponent comes from the schedule
+#: (``nflverse_schedule_cache``), never from here.
+CARRIED_CONTEXT_COLUMNS = ("team", "opponent_team")
+
+CARRIED_OPPORTUNITY_COLUMNS = (
+    "target_share",
+    "air_yards_share",
+    "wopr",
+    "racr",
+    "pacr",
+    "receiving_air_yards",
+    "passing_air_yards",
+    "passing_epa",
+    "rushing_epa",
+    "receiving_epa",
+    "targets",
+    "carries",
+)
+
 #: Minimum weeks a player must have left (and have played) after the cutoff
 #: to be scored. Below this the target is an average of one or two games,
 #: which is noise rather than a rest-of-season rate.
@@ -269,7 +320,7 @@ def build_scored_player_weeks(
             "fantasy_points": scored["fantasy_points"],
         }
     )
-    for column in ("target_share", "air_yards_share", "wopr", "targets", "carries"):
+    for column in CARRIED_CONTEXT_COLUMNS + CARRIED_OPPORTUNITY_COLUMNS:
         if column in scored.columns:
             result[column] = scored[column].to_numpy()
 
@@ -630,9 +681,7 @@ def score_baselines(
             if prediction_column not in frame.columns:
                 continue
             metrics = score_ros_predictions(frame, prediction_column, top_n=top_n)
-            metrics.update(
-                season=season, cutoff_week=cutoff_week, position=position
-            )
+            metrics.update(season=season, cutoff_week=cutoff_week, position=position)
             rows.append(metrics)
 
     return pd.DataFrame(rows, columns=ROS_METRIC_COLUMNS)

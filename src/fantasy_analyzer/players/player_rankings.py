@@ -317,29 +317,65 @@ Two modes
 backward-looking ranking of what players actually did in the weeks the
 caller's ``performance_df`` covers.
 
-``mode="projected"`` **raises** :class:`NotImplementedError`. The parameter
-and the ``projections_df`` seam ship now so that the public signature is
-stable and a future ticket can fill in the branch without breaking callers.
-What that branch will eventually do is specified here so it is not
-re-litigated later:
+``mode="projected"`` (FFA-092) runs the **identical** five-component
+pipeline described above -- replacement level -> component z-scores ->
+weighted blend -> ranks -- on *projected* rest-of-season totals instead of
+realized ones. It requires ``projections_df`` and ignores
+``performance_df`` entirely (the two are mutually exclusive inputs, one per
+mode, rather than one frame serving both).
 
-1. Aggregate a :class:`~fantasy_analyzer.players.projections.ProjectionProvider`'s
-   ``projections(season, week)`` output across the remaining weeks of the
-   season into projected season totals per player (the same "call it per
-   week and concatenate" pattern FFA-072's docstring describes for
-   rest-of-season rankings), or accept an already-aggregated frame via
-   ``projections_df``.
-2. Run the **identical** pipeline on those projected totals: replacement
-   level -> component z-scores -> weighted blend -> ranks. Nothing about
-   the methodology above changes; only the source of ``games_played``,
-   ``points_per_game`` and ``total_points`` changes.
+``projections_df`` shape: a ``performance_df``-shaped frame carrying at
+minimum ``season``, ``sleeper_player_id``, ``position``, ``games_played``,
+``points_per_game``, ``total_points`` -- but populated with **projected**
+rest-of-season values rather than realized ones: ``games_played`` is a
+player's projected *remaining* games (not games already played),
+``points_per_game`` is his projected rest-of-season points per game, and
+``total_points`` is ``points_per_game * games_played`` (the projected
+rest-of-season point total). ``player_name``/``nfl_team`` are optional
+labels, carried through if present. The natural producer of this shape is
+:func:`~fantasy_analyzer.players.waiver_rankings.build_free_agent_ros_projections`
+(FFA-090's shrinkage estimator applied to a free-agent pool) via
+:func:`~fantasy_analyzer.players.waiver_rankings.build_projection_performance_frame`,
+which does the rename/select for you, but any frame in this shape works --
+a rostered player's own ROS projection is just as valid an input row as a
+free agent's.
 
-This module deliberately does **not** invent the projection methodology
-that step 1 requires -- how to combine weekly projections, how to handle
-players a provider does not project, how to weight projected-future against
-realized-past production. FFA-072 explicitly defers all of that, and
-inventing it here would violate that ticket's stated boundary. Any ``mode``
-value other than the two in :data:`RANKING_MODES` raises ``ValueError``.
+Why ``cv`` and ``scoring_ceiling`` are not required in projected mode, and
+what that does to the blend
+--------------------------------------------------------------------------
+
+``projections_df`` is not required to carry ``cv`` or ``scoring_ceiling``
+(and any values it does carry are ignored). This is a deliberate design
+choice, not an oversight: both columns describe the **shape of a realized
+weekly scoring distribution** -- how volatile a player actually was, and
+his single best realized game. A rest-of-season *point projection* is a
+single number, with no such distribution behind it; recomputing a
+volatility measure from a projection this module did not build (and whose
+week-by-week shape it has no visibility into) would be inventing a second,
+undocumented model rather than reusing the one FFA-065 already validated.
+
+Concretely, in projected mode ``cv`` and ``scoring_ceiling`` are always
+treated as undefined for every player, which means the reliability and
+upside components are **always** dropped and their weights **always**
+renormalize away, via the exact same "missing component -> drop and
+renormalize, never zero-fill" rule described above (see "Missing
+components"). Projected-mode rankings therefore run on three components --
+value, rate, and scarcity -- and ``components_used`` caps at 3 for every
+row (never 5). Under the default weights (0.30/0.20/0.20/0.15/0.15), the
+surviving 0.30 + 0.20 + 0.15 = 0.65 renormalizes to
+value ≈0.4615, rate ≈0.3077, scarcity ≈0.2308. A caller who wants a
+different split between value/rate/scarcity in projected mode should pass
+an explicit ``weights=RankingWeights(value=..., rate=..., scarcity=...,
+reliability=0.0, upside=0.0)`` -- setting ``reliability``/``upside`` to
+``0.0`` here is purely cosmetic (they are already dropped for every row in
+this mode) but documents the intent at the call site.
+
+Everything else -- the replacement-level machinery, the shrunk-rate
+estimator, the scarcity double-counting, ties, ranks, and percentiles -- is
+identical to retrospective mode, because it is the same code path: the
+z-score/blend/rank machinery has no idea whether ``points_per_game`` came
+from realized or projected production. Any ``mode`` value other than the
+two in :data:`RANKING_MODES` raises ``ValueError``.
 
 Regular season vs. playoffs: this module is phase-agnostic
 --------------------------------------------------------------------------
@@ -875,30 +911,37 @@ def build_league_player_rankings(
             ``LeagueSettings.total_rosters``), passed through to FFA-068.
             ``None`` is legal and falls into FFA-068's documented
             worst-rostered baseline.
-        mode: ``"retrospective"`` (default) ranks realized production.
-            ``"projected"`` is a declared seam that raises
-            ``NotImplementedError``; see the module docstring's "Two modes".
+        mode: ``"retrospective"`` (default) ranks realized production from
+            ``performance_df``. ``"projected"`` (FFA-092) ranks projected
+            rest-of-season totals from ``projections_df`` instead; see the
+            module docstring's "Two modes" section for the exact expected
+            shape and which components survive.
         weights: The blend weights. Need not sum to 1.0 (they are
             renormalized); the defaults do.
         rate_shrinkage_games: ``k`` in ``n * x / (n + k)``, the prior
             strength for the rate component, in games. ``0.0`` disables
             shrinkage exactly.
-        projections_df: Reserved for ``mode="projected"``. Ignored in
-            retrospective mode.
+        projections_df: Required when ``mode="projected"``; ignored in
+            retrospective mode. See the module docstring's "Two modes" for
+            the exact expected shape.
 
     Returns:
         A DataFrame with columns :data:`LEAGUE_PLAYER_RANKING_COLUMNS`, one
         row per player-season FFA-068 emits, sorted by ascending ``season``
         then descending ``ranking_score`` (unscored players last), ties
         broken by ascending ``sleeper_player_id``. Empty (with the same
-        columns and dtypes) if the input is empty or no row is usable.
+        columns and dtypes) if the input is empty or no row is usable. In
+        projected mode, ``cv`` and ``scoring_ceiling`` are always ``NaN``
+        and ``components_used`` never exceeds 3 -- see "Two modes".
 
     Raises:
         ValueError: If ``mode`` is not in :data:`RANKING_MODES`, if
-            ``rate_shrinkage_games`` is negative, if ``performance_df`` is
-            missing a required column, or (from FFA-068) if it contains
-            duplicate ``(season, sleeper_player_id)`` rows.
-        NotImplementedError: If ``mode="projected"``.
+            ``rate_shrinkage_games`` is negative, if the relevant input
+            frame (``performance_df`` in retrospective mode,
+            ``projections_df`` in projected mode) is missing a required
+            column, if ``mode="projected"`` and ``projections_df`` is
+            ``None``, or (from FFA-068) if the input contains duplicate
+            ``(season, sleeper_player_id)`` rows.
     """
     if mode not in RANKING_MODES:
         raise ValueError(
@@ -909,30 +952,41 @@ def build_league_player_rankings(
             "rate_shrinkage_games must be a non-negative number of games "
             f"(0.0 disables shrinkage); got {rate_shrinkage_games!r}"
         )
-    if mode == "projected":
-        raise NotImplementedError(
-            "mode='projected' is a declared seam, not an implementation: it "
-            "requires aggregating a ProjectionProvider's per-week "
-            "projections (FFA-072, fantasy_analyzer.players.projections) "
-            "into projected season totals, and FFA-072 explicitly defers "
-            "that methodology. Use mode='retrospective'."
-        )
 
-    if performance_df.empty:
+    if mode == "projected":
+        if projections_df is None:
+            raise ValueError(
+                "mode='projected' requires projections_df; see the module "
+                "docstring's 'Two modes' section for the expected shape."
+            )
+        source_df = projections_df
+        if not source_df.empty:
+            source_df = source_df.copy()
+            for optional_column in ("cv", "scoring_ceiling"):
+                # Always undefined in projected mode -- see the module
+                # docstring's "Why cv and scoring_ceiling are not required"
+                # section. Overwritten even if present, so a caller cannot
+                # accidentally smuggle a realized-distribution column into a
+                # projected ranking.
+                source_df[optional_column] = float("nan")
+    else:
+        source_df = performance_df
+
+    if source_df.empty:
         return _empty_frame()
 
-    _require_columns(performance_df)
+    _require_columns(source_df)
 
     # FFA-068 owns every replacement, VORP and scarcity number below; this
     # module reads them and never recomputes them.
-    value_df = build_player_value_metrics(performance_df, roster_positions, num_teams)
+    value_df = build_player_value_metrics(source_df, roster_positions, num_teams)
     if value_df.empty:
         return _empty_frame()
     scarcity_df = build_position_scarcity_metrics(
-        performance_df, roster_positions, num_teams
+        source_df, roster_positions, num_teams
     )
 
-    dispersion = _dispersion_lookup(performance_df)
+    dispersion = _dispersion_lookup(source_df)
     scarcity = _scarcity_lookup(scarcity_df)
 
     rows: list[dict[str, Any]] = []

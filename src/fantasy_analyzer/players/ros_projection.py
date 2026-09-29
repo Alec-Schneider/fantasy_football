@@ -92,8 +92,10 @@ that trap; the next one should not.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from typing import Iterable, Mapping, Optional, Sequence
+from pathlib import Path
+from typing import Iterable, Mapping, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -114,7 +116,20 @@ PROJECTION_COLUMN = "projected_ppg"
 #: prior until midseason" (12). Half-game resolution below 6 because that is
 #: where the fitted values land and where the error surface is steepest.
 DEFAULT_N0_GRID = (
-    0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 6.0, 8.0, 10.0, 12.0,
+    0.5,
+    1.0,
+    1.5,
+    2.0,
+    2.5,
+    3.0,
+    3.5,
+    4.0,
+    4.5,
+    5.0,
+    6.0,
+    8.0,
+    10.0,
+    12.0,
 )
 
 #: ``n0`` used for a position with no fitted value -- an unseen position, or
@@ -122,6 +137,11 @@ DEFAULT_N0_GRID = (
 #: evidence about how fast this position's evidence accumulates, weighting
 #: the season and the prior equally at three games is the neutral choice.
 DEFAULT_N0 = 3.0
+
+#: Where :func:`save_shrinkage_parameters` writes a fitted parameter set by
+#: default, and where :func:`load_shrinkage_parameters` looks for one
+#: (FFA-101). Sits beside the nflverse season cache the fit is run over.
+DEFAULT_SHRINKAGE_PARAMETERS_PATH = Path(".cache/nflverse/shrinkage_parameters.json")
 
 
 @dataclass(frozen=True)
@@ -159,15 +179,98 @@ class ShrinkageParameters:
         return self.n0_by_position.get(position, self.default_n0)
 
 
+def save_shrinkage_parameters(
+    parameters: ShrinkageParameters,
+    path: Union[str, Path] = DEFAULT_SHRINKAGE_PARAMETERS_PATH,
+) -> Path:
+    """Persist a fitted parameter set as JSON (FFA-101).
+
+    :func:`fit_shrinkage` needs a multi-season corpus on disk and takes
+    real time to run, which is why every CLI surface in this package
+    historically fell back to a uniform, unfitted ``n0``. Persisting the
+    fit once turns that into a one-off cost: see
+    :func:`load_shrinkage_parameters` for the read side.
+
+    Args:
+        parameters: The fitted constants to write.
+        path: Destination file. Parent directories are created.
+
+    Returns:
+        The path written.
+    """
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Coerced to built-in types rather than written through: a parameter
+    # set built from a DataFrame carries numpy scalars (``fit_seasons``
+    # typically comes straight from ``scored["season"].unique()``), and
+    # ``json.dumps`` rejects ``numpy.int64`` outright.
+    destination.write_text(
+        json.dumps(
+            {
+                "n0_by_position": {
+                    str(position): float(value)
+                    for position, value in parameters.n0_by_position.items()
+                },
+                "default_n0": float(parameters.default_n0),
+                "fit_seasons": [int(season) for season in parameters.fit_seasons],
+                "fit_mae": {
+                    str(position): float(value)
+                    for position, value in (parameters.fit_mae or {}).items()
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    return destination
+
+
+def load_shrinkage_parameters(
+    path: Union[str, Path] = DEFAULT_SHRINKAGE_PARAMETERS_PATH,
+) -> Optional[ShrinkageParameters]:
+    """Load a previously fitted parameter set, or ``None`` if there is none.
+
+    Returns ``None`` rather than raising for both "no file" and "the file
+    is unreadable", so a caller's fallback path is the same in either
+    case: a missing fit and a corrupt fit are equally reasons to use the
+    uniform default, and neither should take down a ranking.
+
+    Args:
+        path: The file :func:`save_shrinkage_parameters` wrote.
+
+    Returns:
+        The stored :class:`ShrinkageParameters`, or ``None``.
+    """
+    source = Path(path)
+    if not source.exists():
+        return None
+
+    try:
+        payload = json.loads(source.read_text())
+        return ShrinkageParameters(
+            n0_by_position={
+                str(position): float(value)
+                for position, value in payload.get("n0_by_position", {}).items()
+            },
+            default_n0=float(payload.get("default_n0", DEFAULT_N0)),
+            fit_seasons=tuple(int(season) for season in payload.get("fit_seasons", ())),
+            fit_mae={
+                str(position): float(value)
+                for position, value in (payload.get("fit_mae") or {}).items()
+            },
+        )
+    except (ValueError, TypeError, AttributeError, OSError):
+        return None
+
+
 def _prior_with_fallback(evaluation_df: pd.DataFrame) -> pd.Series:
     """Prior points per game, backfilled with the positional observed mean.
 
     See the module docstring on why the fallback is the positional mean of
     ``ppg_to_date`` (knowable at the cutoff, so no leakage) rather than zero.
     """
-    positional_mean = evaluation_df.groupby("position")["ppg_to_date"].transform(
-        "mean"
-    )
+    positional_mean = evaluation_df.groupby("position")["ppg_to_date"].transform("mean")
     prior = evaluation_df["prior_season_ppg"]
     return prior.where(prior.notna(), positional_mean)
 

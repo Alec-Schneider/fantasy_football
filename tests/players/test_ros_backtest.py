@@ -93,9 +93,7 @@ def test_scores_raw_stats_with_league_settings() -> None:
             }
         ]
     )
-    scored = build_scored_player_weeks(
-        [raw], {"rec": 0.5, "rec_yd": 0.1, "rec_td": 6}
-    )
+    scored = build_scored_player_weeks([raw], {"rec": 0.5, "rec_yd": 0.1, "rec_td": 6})
 
     assert len(scored) == 1
     assert scored.iloc[0]["fantasy_points"] == pytest.approx(22.0)
@@ -264,9 +262,7 @@ def test_min_remaining_games_filters_and_is_counted(
 def test_player_with_no_games_before_the_cutoff_is_counted_separately() -> None:
     """A midseason call-up is unobservable at decision time."""
     late = _weeks([("golf", "WR", week, 10.0) for week in range(5, 9)])
-    early = _weeks(
-        [("hotel", "WR", week, 10.0) for week in range(1, 9)]
-    )
+    early = _weeks([("hotel", "WR", week, 10.0) for week in range(1, 9)])
     result = build_ros_evaluation_set(
         pd.concat([early, late], ignore_index=True),
         season=2025,
@@ -535,8 +531,7 @@ def test_waiver_filter_keeps_the_below_median_scorers(
     assert set(filtered.evaluation_df["player_id"]) == {"alpha", "charlie"}
     # Exclusion counts describe how the input was built, so they carry through.
     assert (
-        filtered.excluded_too_few_remaining
-        == evaluation_set.excluded_too_few_remaining
+        filtered.excluded_too_few_remaining == evaluation_set.excluded_too_few_remaining
     )
 
 
@@ -551,9 +546,7 @@ def test_waiver_filter_recomputes_the_null_model(toy_weeks: pd.DataFrame) -> Non
     )
     filtered = filter_to_waiver_population(evaluation_set)
 
-    assert filtered.evaluation_df["position_mean_ppg"].unique() == pytest.approx(
-        [17.5]
-    )
+    assert filtered.evaluation_df["position_mean_ppg"].unique() == pytest.approx([17.5])
 
 
 def test_waiver_filter_rejects_an_out_of_range_quantile(
@@ -590,3 +583,22 @@ def test_run_backtest_over_no_evaluable_cells_returns_an_empty_frame(
     )
     assert results.empty
     assert list(results.columns) == ROS_METRIC_COLUMNS
+
+
+def test_carried_opportunity_columns_cover_the_provider_contract() -> None:
+    """FFA-098: the passthrough list must not drift from the provider's.
+
+    ``build_scored_player_weeks`` carries usage columns by name, so a
+    column added to
+    :data:`~fantasy_analyzer.players.nflverse_provider.OPPORTUNITY_COLUMNS`
+    would otherwise be silently dropped here and never reach the waiver
+    board. This test is the link that makes that a failure instead.
+    """
+    from fantasy_analyzer.players.nflverse_provider import OPPORTUNITY_COLUMNS
+    from fantasy_analyzer.players.ros_backtest import CARRIED_OPPORTUNITY_COLUMNS
+
+    missing = set(OPPORTUNITY_COLUMNS) - set(CARRIED_OPPORTUNITY_COLUMNS)
+    assert not missing, (
+        f"{sorted(missing)} are in the provider's OPPORTUNITY_COLUMNS but "
+        "are not carried through build_scored_player_weeks"
+    )

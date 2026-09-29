@@ -778,12 +778,87 @@ def test_negative_shrinkage_raises() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_projected_mode_is_not_implemented() -> None:
-    with pytest.raises(NotImplementedError, match="FFA-072"):
-        _toy_rankings(mode="projected")
-    # Raised before the data is even looked at, so the seam is stable.
-    with pytest.raises(NotImplementedError):
+def test_projected_mode_requires_projections_df() -> None:
+    with pytest.raises(ValueError, match="projections_df"):
         build_league_player_rankings(_df([]), ["QB"], 1, mode="projected")
+
+
+def test_projected_mode_drops_reliability_and_upside_and_renormalizes() -> None:
+    """FFA-092: projected mode reuses the toy production numbers.
+
+    ``cv``/``scoring_ceiling`` are present in this frame (it is the exact
+    retrospective toy frame) but must be ignored entirely in projected
+    mode, so ``z_reliability``/``z_upside`` are always undefined and only
+    value/rate/scarcity survive. Since every player has identical
+    ``games_played`` (16) in this toy, ``z_rate == z_value`` by
+    construction (see the retrospective toy docstring above), so:
+
+        ranking_score = (0.30 * z_value + 0.20 * z_rate + 0.15 * z_scarcity)
+                        / (0.30 + 0.20 + 0.15)
+                      = (10 * z_value + 3 * z_scarcity) / 13
+
+    using the exact ``z_value``/``z_scarcity`` values hand-derived in
+    ``_toy_rows``'s docstring.
+    """
+    projections_df = _df(_toy_rows())
+    df = build_league_player_rankings(
+        pd.DataFrame(),
+        TOY_ROSTER_POSITIONS,
+        TOY_NUM_TEAMS,
+        mode="projected",
+        projections_df=projections_df,
+    )
+
+    assert (df["components_used"] == 3).all()
+    assert df["cv"].isna().all()
+    assert df["scoring_ceiling"].isna().all()
+    assert df["z_reliability"].isna().all()
+    assert df["z_upside"].isna().all()
+
+    expected = {
+        "QB1": 5.0 / 13,
+        "QB2": -2.5 / 13,
+        "QB3": -7.5 / 13,
+        "RB1": 23.0 / 13,
+        "RB2": -4.5 / 13,
+        "WR1": -13.5 / 13,
+    }
+    for player_id, score in expected.items():
+        row = _get_row(df, player_id)
+        assert row["ranking_score"] == pytest.approx(score)
+
+
+def test_projected_mode_ignores_performance_df() -> None:
+    projections_df = _df(_toy_rows())
+    with_junk_performance = build_league_player_rankings(
+        _df(_toy_rows()[:1]),
+        TOY_ROSTER_POSITIONS,
+        TOY_NUM_TEAMS,
+        mode="projected",
+        projections_df=projections_df,
+    )
+    only_projections = build_league_player_rankings(
+        pd.DataFrame(),
+        TOY_ROSTER_POSITIONS,
+        TOY_NUM_TEAMS,
+        mode="projected",
+        projections_df=projections_df,
+    )
+    assert list(with_junk_performance["ranking_score"]) == pytest.approx(
+        list(only_projections["ranking_score"])
+    )
+
+
+def test_projected_mode_empty_projections_df_returns_empty_frame() -> None:
+    df = build_league_player_rankings(
+        pd.DataFrame(),
+        TOY_ROSTER_POSITIONS,
+        TOY_NUM_TEAMS,
+        mode="projected",
+        projections_df=_df([]),
+    )
+    assert df.empty
+    assert list(df.columns) == LEAGUE_PLAYER_RANKING_COLUMNS
 
 
 def test_unknown_mode_raises() -> None:
