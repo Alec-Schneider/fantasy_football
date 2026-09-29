@@ -47,7 +47,11 @@ from fantasy_analyzer.analytics.schedule_luck import (
     SCHEDULE_LUCK_COLUMNS,
     build_schedule_luck,
 )
-from fantasy_analyzer.analytics.standings import build_scoring_summary, build_standings
+from fantasy_analyzer.analytics.standings import (
+    build_scoring_summary,
+    build_standings,
+    build_standings_through_week,
+)
 from fantasy_analyzer.analytics.strength_of_schedule import (
     STRENGTH_OF_SCHEDULE_COLUMNS,
     build_strength_of_schedule,
@@ -70,6 +74,7 @@ __all__ = [
     "build_power_rankings",
     "build_scoring_summary",
     "build_standings",
+    "build_standings_through_week",
     "build_head_to_head_records",
     "build_head_to_head_matrix",
     "build_matchup_history",
