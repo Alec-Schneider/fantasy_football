@@ -284,12 +284,8 @@ def prior_heavy_weeks() -> pd.DataFrame:
     prior_rows = []
     for index in range(40):
         prior_rate = 5.0 + index * 0.5
-        prior_rows += [
-            (f"p{index}", "WR", week, prior_rate) for week in range(1, 13)
-        ]
-    return pd.concat(
-        [current, _weeks(prior_rows, season=2024)], ignore_index=True
-    )
+        prior_rows += [(f"p{index}", "WR", week, prior_rate) for week in range(1, 13)]
+    return pd.concat([current, _weeks(prior_rows, season=2024)], ignore_index=True)
 
 
 def test_fit_prefers_a_large_n0_when_the_prior_predicts_best(
@@ -314,9 +310,7 @@ def test_fit_prefers_a_small_n0_when_the_season_to_date_predicts_best() -> None:
     for index in range(40):
         rate = 5.0 + index * 0.5
         rows += [(f"p{index}", "WR", week, rate) for week in range(1, 13)]
-        prior_rows += [
-            (f"p{index}", "WR", week, 30.0 - rate) for week in range(1, 13)
-        ]
+        prior_rows += [(f"p{index}", "WR", week, 30.0 - rate) for week in range(1, 13)]
     weeks = pd.concat(
         [_weeks(rows, season=2025), _weeks(prior_rows, season=2024)],
         ignore_index=True,
@@ -418,10 +412,7 @@ def test_backtest_never_fits_on_the_season_it_scores() -> None:
             rate = 5.0 + index * 0.5
             rows.append(
                 _weeks(
-                    [
-                        (f"p{index}", "WR", week, rate)
-                        for week in range(1, 13)
-                    ],
+                    [(f"p{index}", "WR", week, rate) for week in range(1, 13)],
                     season=season,
                 )
             )
@@ -493,3 +484,102 @@ def test_backtest_projection_is_perfect_on_a_deterministic_league() -> None:
 
     assert projection["mae"].max() == pytest.approx(0.0, abs=1e-9)
     assert projection["spearman"].min() == pytest.approx(1.0)
+
+
+# --------------------------------------------------------------------------
+# FFA-101 -- persisting a fitted parameter set
+# --------------------------------------------------------------------------
+
+
+def test_shrinkage_parameters_round_trip(tmp_path) -> None:
+    from fantasy_analyzer.players.ros_projection import (
+        load_shrinkage_parameters,
+        save_shrinkage_parameters,
+    )
+
+    parameters = ShrinkageParameters(
+        n0_by_position={"RB": 2.0, "WR": 2.0, "TE": 2.5, "QB": 4.0},
+        default_n0=3.0,
+        fit_seasons=(2016, 2017, 2018),
+        fit_mae={"RB": 3.25, "WR": 2.75},
+    )
+    path = save_shrinkage_parameters(parameters, tmp_path / "nested" / "params.json")
+    assert path.exists()
+
+    loaded = load_shrinkage_parameters(path)
+    assert loaded is not None
+    assert loaded.n0_by_position == parameters.n0_by_position
+    assert loaded.default_n0 == 3.0
+    assert loaded.fit_seasons == (2016, 2017, 2018)
+    assert loaded.fit_mae == {"RB": 3.25, "WR": 2.75}
+    # The round-tripped set must behave identically, not merely compare equal.
+    assert loaded.n0_for("TE") == 2.5
+    assert loaded.n0_for("K") == 3.0
+
+
+def test_load_shrinkage_parameters_missing_file_returns_none(tmp_path) -> None:
+    from fantasy_analyzer.players.ros_projection import load_shrinkage_parameters
+
+    assert load_shrinkage_parameters(tmp_path / "nope.json") is None
+
+
+def test_load_shrinkage_parameters_corrupt_file_returns_none(tmp_path) -> None:
+    """A corrupt fit and a missing fit both mean "use the default".
+
+    Neither should take down a ranking, so both return None rather than
+    raising -- see the function's docstring.
+    """
+    from fantasy_analyzer.players.ros_projection import load_shrinkage_parameters
+
+    path = tmp_path / "params.json"
+    path.write_text("{ this is not json")
+    assert load_shrinkage_parameters(path) is None
+
+    path.write_text('{"n0_by_position": {"RB": "not-a-number"}}')
+    assert load_shrinkage_parameters(path) is None
+
+
+def test_load_shrinkage_parameters_partial_file_uses_defaults(tmp_path) -> None:
+    from fantasy_analyzer.players.ros_projection import (
+        DEFAULT_N0,
+        load_shrinkage_parameters,
+    )
+
+    path = tmp_path / "params.json"
+    path.write_text('{"n0_by_position": {"RB": 2.0}}')
+    loaded = load_shrinkage_parameters(path)
+    assert loaded is not None
+    assert loaded.n0_for("RB") == 2.0
+    assert loaded.n0_for("WR") == DEFAULT_N0
+    assert loaded.fit_seasons == ()
+
+
+def test_save_shrinkage_parameters_accepts_numpy_scalars(tmp_path) -> None:
+    """A parameter set built from a DataFrame carries numpy scalars.
+
+    ``fit_seasons`` in practice comes straight from
+    ``scored["season"].unique()``, which yields ``numpy.int64`` --
+    rejected outright by ``json.dumps``. Regression test: the first real
+    run of ``scripts/fit_shrinkage_parameters.py`` died here after a
+    25-minute fit.
+    """
+    import numpy as np
+
+    from fantasy_analyzer.players.ros_projection import (
+        load_shrinkage_parameters,
+        save_shrinkage_parameters,
+    )
+
+    parameters = ShrinkageParameters(
+        n0_by_position={"RB": np.float64(2.0)},
+        default_n0=np.float64(3.0),
+        fit_seasons=tuple(np.int64(season) for season in (2016, 2017)),
+        fit_mae={"RB": np.float64(3.25)},
+    )
+    path = save_shrinkage_parameters(parameters, tmp_path / "params.json")
+
+    loaded = load_shrinkage_parameters(path)
+    assert loaded is not None
+    assert loaded.fit_seasons == (2016, 2017)
+    assert isinstance(loaded.fit_seasons[0], int)
+    assert loaded.n0_for("RB") == 2.0

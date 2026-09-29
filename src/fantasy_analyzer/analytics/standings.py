@@ -90,11 +90,51 @@ FFA-033's season matchup DataFrame exists.
 Scoring summary does not distinguish regular season from playoffs, for the
 same reason as ``build_standings`` above -- Sleeper's roster counters are
 season-cumulative.
+
+As-of-week standings (FFA-102)
+-------------------------------
+
+:func:`build_standings_through_week` answers the question ``build_standings``
+structurally cannot: *what did the standings look like after week N?* It
+takes the week-level
+:data:`~fantasy_analyzer.matchups.season_matchups.SEASON_MATCHUP_COLUMNS`
+frame instead of ``rosters_df``, so every counter is re-derived from
+matchup results rather than read off Sleeper's running totals. It returns
+the same :data:`STANDINGS_COLUMNS` shape, uses the same win-percentage
+definition and the same ``win_pct`` -> ``points_for`` competition-ranking
+rule, and is therefore a drop-in for any consumer of ``build_standings``.
+
+- **wins/losses/ties** -- counted from ``winner``/``loser``/``is_tie``,
+  which :mod:`~fantasy_analyzer.matchups.season_matchups` carries through as
+  raw ``roster_id`` values (not owner labels).
+- **points_for** / **points_against** -- summed from ``points_1``/
+  ``points_2``, read from whichever side of the pairing the roster sits on.
+
+Regular season vs. playoffs -- **explicit**, unlike the two functions above.
+``include_playoffs`` defaults to ``False``, so the returned standings
+describe regular-season play only, matching the conventional meaning of
+"standings after week N". Pass ``include_playoffs=True`` to count playoff
+results too.
+
+Incomplete matchups -- a bye, or a week whose scores Sleeper has not
+populated -- contribute **nothing**: no win, no loss, and no points on
+either side. A row is counted only when it has an opponent
+(``roster_2_id``) and both point totals. This keeps ``points_for`` and
+``points_against`` symmetric across the league (every counted game
+contributes to both), which in turn keeps ``point_diff`` meaningful; the
+alternative, crediting a bye team's points with no opposing total, would
+inflate that team's differential by a full game. A team whose every game so
+far is incomplete appears with an all-zero record rather than being dropped.
 """
 
 from __future__ import annotations
 
+from typing import Any, Sequence
+
 import pandas as pd
+
+#: Per-roster counters :func:`build_standings_through_week` accumulates.
+_RECORD_FIELDS = ["wins", "losses", "ties", "points_for", "points_against"]
 
 #: Column order for the DataFrame returned by :func:`build_standings`.
 STANDINGS_COLUMNS = [
@@ -186,20 +226,148 @@ def build_standings(rosters_df: pd.DataFrame, teams_df: pd.DataFrame) -> pd.Data
         by=["win_pct", "points_for"], ascending=[False, False]
     ).reset_index(drop=True)
 
-    # Standard competition ("1224") ranking: ties share a rank, and the next
-    # distinct rank skips the number of tied teams.
-    rank_keys = merged[["win_pct", "points_for"]].apply(tuple, axis=1)
-    ranks = []
+    merged["rank"] = _competition_ranks(
+        merged[["win_pct", "points_for"]].apply(tuple, axis=1)
+    )
+
+    return merged[STANDINGS_COLUMNS]
+
+
+def _competition_ranks(keys: Sequence[Any]) -> list[int]:
+    """Assign standard competition ("1224") ranks to already-sorted ``keys``.
+
+    Equal adjacent keys share a rank, and the next distinct rank skips the
+    number of tied entries -- two teams tied for 1st both get ``1`` and the
+    next gets ``3``. ``keys`` must already be in ranking order; this helper
+    does not sort.
+    """
+    ranks: list[int] = []
     current_rank = 0
     previous_key = None
-    for position, key in enumerate(rank_keys, start=1):
+    for position, key in enumerate(keys, start=1):
         if key != previous_key:
             current_rank = position
             previous_key = key
         ranks.append(current_rank)
-    merged["rank"] = ranks
+    return ranks
 
-    return merged[STANDINGS_COLUMNS]
+
+def build_standings_through_week(
+    season_matchup_df: pd.DataFrame,
+    teams_df: pd.DataFrame,
+    week: int,
+    *,
+    include_playoffs: bool = False,
+) -> pd.DataFrame:
+    """Build standings as they stood after ``week``, from matchup results.
+
+    Re-derives every counter from the week-level season matchup frame rather
+    than reading Sleeper's season-cumulative roster totals, which is what
+    makes an "after week N" view possible at all --
+    :func:`build_standings` can only ever report the present. See the module
+    docstring's "As-of-week standings" section for the metric definitions,
+    the explicit regular-season-vs-playoff rule, and how incomplete matchups
+    and byes are handled.
+
+    Args:
+        season_matchup_df: A
+            :data:`~fantasy_analyzer.matchups.season_matchups.SEASON_MATCHUP_COLUMNS`-shaped
+            DataFrame, as returned by
+            :func:`~fantasy_analyzer.matchups.season_matchups.build_season_matchup_df`.
+        teams_df: A ``LeagueSnapshot.teams_df``-shaped DataFrame with at
+            least ``["roster_id", "owner_id", "display_name",
+            "team_name"]``. Defines the league's full set of rosters, so a
+            team that has not yet played still gets a row.
+        week: The last week to count. Every matchup with ``week <= week`` is
+            included; later weeks are ignored.
+        include_playoffs: If ``False`` (the default), count regular-season
+            matchups only. If ``True``, count playoff matchups as well.
+
+    Returns:
+        A :data:`STANDINGS_COLUMNS`-shaped DataFrame, one row per roster in
+        ``teams_df``, sorted by descending ``win_pct`` then descending
+        ``points_for``, with 1-indexed standard competition ``rank``.
+
+        An empty DataFrame with the expected columns if ``teams_df`` is
+        empty. If no matchup qualifies (``week`` precedes the season, or
+        every result is incomplete), every team is returned at an all-zero
+        record -- the league before a ball was snapped, not an error.
+    """
+    if teams_df.empty:
+        return pd.DataFrame(columns=STANDINGS_COLUMNS)
+
+    records: dict[Any, dict[str, float]] = {
+        roster_id: {
+            "wins": 0.0,
+            "losses": 0.0,
+            "ties": 0.0,
+            "points_for": 0.0,
+            "points_against": 0.0,
+        }
+        for roster_id in teams_df["roster_id"]
+    }
+
+    if not season_matchup_df.empty:
+        played = season_matchup_df[season_matchup_df["week"] <= week]
+        if not include_playoffs:
+            played = played[~played["is_playoff"].fillna(False).astype(bool)]
+        # Byes and unplayed/partial weeks carry no opponent or no scores;
+        # they contribute to neither record nor points. See the module
+        # docstring's "Incomplete matchups" rule.
+        played = played[
+            played["roster_2_id"].notna()
+            & played["points_1"].notna()
+            & played["points_2"].notna()
+        ]
+
+        for row in played.itertuples(index=False):
+            for roster_id, own, against in (
+                (row.roster_1_id, row.points_1, row.points_2),
+                (row.roster_2_id, row.points_2, row.points_1),
+            ):
+                record = records.setdefault(
+                    roster_id,
+                    {
+                        "wins": 0.0,
+                        "losses": 0.0,
+                        "ties": 0.0,
+                        "points_for": 0.0,
+                        "points_against": 0.0,
+                    },
+                )
+                record["points_for"] += float(own)
+                record["points_against"] += float(against)
+                if row.is_tie:
+                    record["ties"] += 1
+                elif row.winner == roster_id:
+                    record["wins"] += 1
+                elif row.loser == roster_id:
+                    record["losses"] += 1
+
+    rows = [
+        {"roster_id": roster_id, **record} for roster_id, record in records.items()
+    ]
+    standings = pd.DataFrame(rows, columns=["roster_id", *_RECORD_FIELDS])
+
+    standings = standings.merge(
+        teams_df[["roster_id", "owner_id", "display_name", "team_name"]],
+        on="roster_id",
+        how="left",
+    )
+
+    standings["win_pct"] = standings.apply(
+        lambda row: _win_pct(row["wins"], row["losses"], row["ties"]), axis=1
+    )
+    standings["point_diff"] = standings["points_for"] - standings["points_against"]
+
+    standings = standings.sort_values(
+        by=["win_pct", "points_for"], ascending=[False, False]
+    ).reset_index(drop=True)
+    standings["rank"] = _competition_ranks(
+        standings[["win_pct", "points_for"]].apply(tuple, axis=1)
+    )
+
+    return standings[STANDINGS_COLUMNS]
 
 
 def _games_played(wins: float, losses: float, ties: float) -> float:

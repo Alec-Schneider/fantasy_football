@@ -1056,3 +1056,446 @@ Do not implement vendor-specific logic until the interface is stable.
 **Follow-up candidates (not filed):** auditing the rest of the codebase for the same pandas string/`None`-column pattern FFA-085 found and fixed locally; validating the FFA-085 points curve's real accuracy once 2026 results accumulate; promoting the phase-breakdown aggregation into the `players` package if a second caller needs it.
 
 **Follow-up candidates (not filed):** promoting `build_robust_id_crosswalk` and `fantasy_relevant_positions` into the library proper if another caller besides this script turns out to need them; a scheduled/periodic DynastyProcess cache refresh policy (today it is manual, via `--force-refresh-stats`); reconciling the two "top 100" artifact versions published this session so only the corrected one remains visible to the repo owner (the corrected version was republished to the same Artifact URL, so this is likely already resolved, but was not independently re-verified in this entry).
+
+---
+
+## Epic 8 — League & Matchup Commentary
+
+Design doc: `docs/commentary_plan.md`. Ticket numbers renumbered to FFA-090+ when implementation started, since the plan doc's original FFA-080-084 numbering collided with FFA-084 through FFA-086 (draft-grade work), which had since taken those numbers.
+
+### FFA-090 — Weekly Matchup Commentary Context Builder
+**Owner:** Data Scientist
+**Depends on:** FFA-033 (season matchup df), FFA-064 (player-week fact table), FFA-069 (matchup contribution), FFA-067 (lineup efficiency), FFA-040 (head-to-head), FFA-051 (all-play)
+
+New package `src/fantasy_analyzer/commentary/`, `context.py`. `build_matchup_context(snapshot, season_matchup_df, player_week_df, week, *, top_n_contributors=3, projected_points=None) -> list[MatchupContext]` assembles, per non-bye pairing that week: final score/margin/projected score, top contributors each side (`players/matchup_contribution.py`), bench points left on the table + top bench scorer (`players/lineup_efficiency.py`), that week's all-play record each side (`analytics/all_play.py` + `analytics/weekly_scores.py`), head-to-head history entering the week (`analytics/head_to_head.py`, filtered to weeks before `week`), and a new small, documented streak/revenge-game derivation (`STREAK_MIN_LENGTH = 2`, walks chronological prior meetings between the two rosters — not a new analytics module, just local derivation). Returns frozen, JSON-serializable dataclasses (`MatchupContext`, `PlayerContribution`, `BenchScorer`, `AllPlayWeekRecord`, `TeamWeekSummary`, `HeadToHead`, `Streak`). Pure, no network calls.
+
+**Tests:** `tests/commentary/test_context.py` (8 tests total, shared with FFA-091) — empty-input, bye-exclusion, missing-player-data, and first-meeting/no-history edge cases, plus a fully hand-checked week-3 matchup (final score/margin, top contributors incl. a rank tie, bench points left on the table, a snapped 2-game streak, two independently-verified revenge games) against a hand-built 4-roster/3-week toy season fixture.
+
+### FFA-091 — League-Week Recap Commentary Context Builder
+**Owner:** Data Scientist
+**Depends on:** FFA-020 (standings), FFA-056 (power rankings), FFA-050 (weekly scores), FFA-052 (schedule luck)
+
+Same module. `build_league_week_context(snapshot, analytics, standings_df, week, *, previous_standings_df=None) -> LeagueWeekContext` assembles standings + movement since last week (`analytics/standings.py`; standings/previous-standings are caller-supplied since `build_standings` only exposes Sleeper's live cumulative counters, not a per-week-filterable history), power-ranking deltas (`analytics/power_rankings.py`, filtered `week <= N` vs `<= N-1`), the week's scoring leaderboard — highest/lowest/biggest blowout/closest game (`analytics/weekly_scores.py` + `season_matchup_df.margin`), and schedule-luck outliers (`analytics/schedule_luck.py`, same week-filtering convention). Returns `LeagueWeekContext` composed of `StandingsMovement`, `PowerRankingDelta`, `ScoringLeaderboardEntry`, `MatchupExtreme`, `WeeklyScoringLeaderboard`, `ScheduleLuckOutlier`, `ScheduleLuckOutliers`.
+
+**Milestone field intentionally omitted:** the design doc asked for "clinched playoff spot / mathematically eliminated" flags, but `matchups/playoffs.py`'s only boundary logic (`build_final_placements`) resolves a placement only from an already-played bracket match — it cannot determine clinch/elimination status mid-regular-season, which requires combinatorial remaining-schedule simulation against `playoff_teams` that no module in this repo currently computes. Omitted rather than inventing that logic; flagged as a follow-up ticket candidate.
+
+**Tests:** shared `tests/commentary/test_context.py` — empty-analytics and week-1/no-previous-week edge cases, plus a fully hand-checked week-3 league recap (standings + rank movement, weekly leaderboard, schedule-luck outliers derived from a shown-in-comments 9-comparison-per-roster all-play calculation). Power-ranking-delta assertions are structural only (the underlying z-score arithmetic is already covered by `test_power_rankings.py`). Full suite **967 passed** after FFA-090/091.
+
+### FFA-092 — Commentary Prompt Templates
+**Owner:** Software Engineer
+**Depends on:** FFA-090, FFA-091
+
+`src/fantasy_analyzer/commentary/prompts.py` — pure, network-free functions rendering context dataclasses into a fixed three-part prompt structure (role/goal framing, a JSON data block via `dataclasses.asdict` + `json.dumps(..., indent=2, default=str)`, explicit constraints incl. "don't invent stats not present in the data"). `tone` (`"witty"` / `"straightforward"`, via `TONE_DESCRIPTIONS`) and `max_words` are real parameters, not hardcoded, on all three functions: `weekly_matchup_prompt(context, *, tone="witty", max_words=150)` (one matchup), `combined_matchup_prompt(contexts, *, tone="witty", max_words=120)` (all of a week's matchups in one prompt), `league_week_recap_prompt(context, *, tone="witty", max_words=400)`.
+
+**Tests:** `tests/commentary/test_prompts.py`, 15 tests — role framing / data block / constraints all present; JSON block round-trips and matches the source context; tone changes wording; `max_words` reflected; combined prompt covers every matchup incl. empty-list case; recap prompt data/wording.
+
+### FFA-093 — Commentary CLI Subcommand (prompt-only)
+**Owner:** Software Engineer
+**Depends on:** FFA-092
+
+Extended `src/fantasy_analyzer/cli.py` with a `commentary` subcommand mirroring the existing `summary` subcommand's plumbing style:
+```
+fantasy-analyzer commentary matchups <league_id> --week N --total-weeks N [--tone TONE] [--per-matchup]
+fantasy-analyzer commentary recap <league_id> --week N --total-weeks N [--tone TONE]
+```
+Both print prompt text to stdout only — no `--generate` flag (that's FFA-094, untouched, not stubbed). `build_commentary_inputs(client, league_id, total_weeks, *, provider=None)` reuses the existing normalization chain (`load_league_snapshot` → `derive_season_boundaries` → `load_season_matchups` → `pair_season_matchups` → `derive_season_outcomes` → `build_season_matchup_df`, plus `build_player_week_fact_table`, `build_standings`, `build_league_analytics`) rather than inventing a new fetch path, same pattern `scripts/player_analysis.py`/`run_summary` already use. `run_commentary_matchups`/`run_commentary_recap` build context via FFA-090/091's builders and format with FFA-092's prompt functions. `--per-matchup` selects per-matchup prompts; default is the combined prompt.
+
+**Scope-narrowing choice (deliberate, not an oversight):** the default (no injected `provider`) uses `build_id_crosswalk` (Sleeper-catalog-only `gsis_id` crosswalk), not the richer DynastyProcess-backed `build_robust_id_crosswalk` that `scripts/player_analysis.py` uses — keeps the CLI's default path to one network dependency instead of two, at the cost of lower player-name coverage in `top_contributors`/bench-scorer fields for real-world runs. Flagged as a follow-up candidate if contributor-name coverage turns out to matter for commentary quality.
+
+README.md updated with the two new `commentary` CLI examples alongside the existing `leagues`/`summary` ones.
+
+**Tests:** `tests/test_cli.py` — 12 new tests: argument parsing for both sub-subcommands (incl. required sub-subcommand), `run_commentary_matchups` (combined/per-matchup/no-matchups-for-week), `run_commentary_recap`, and `main()` end-to-end for both (mocked via `requests_mock` against existing fixtures, `total_weeks=1` to keep the matchups mock minimal, `NflverseWeeklyStatsProvider` monkeypatched to a fake). Full suite **987 passed**; `ruff check`/`ruff format` clean across all Epic 8 files (a pre-existing formatting drift in `context.py`/`test_context.py` from FFA-090/091, flagged by the FFA-092/093 agent, was reformatted in the same pass).
+
+**Follow-up candidates (not filed):** a milestone/clinch-elimination context field (needs new playoff-simulation logic); swapping the CLI's default crosswalk to the DynastyProcess-backed one for better player-name coverage.
+
+### FFA-094 — Anthropic API Commentary Client + `--generate` flag
+**Owner:** Software Engineer
+**Depends on:** FFA-093
+
+API-billing decision made: default model `claude-opus-4-8` at `output_config.effort="high"`. New `src/fantasy_analyzer/commentary/client.py` — `CommentaryClient` wraps the `anthropic` SDK (`anthropic>=1.4` added to `pyproject.toml` dependencies); `generate(prompt, *, model=DEFAULT_MODEL, effort=DEFAULT_EFFORT, max_tokens=DEFAULT_MAX_TOKENS) -> str` sends one user-turn message and concatenates the response's `text` content blocks (skipping `thinking`/other block types). Credentials resolve from the environment via the SDK's own default (`ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / an `ant auth login` profile) — never hardcoded. An optional `client` constructor parameter accepts any object exposing `messages.create(...)`, letting tests and other callers inject a fake instead of a real network-backed `anthropic.Anthropic()`. Anthropic API failures (`anthropic.APIError` and subclasses) and an empty-text response both raise a new `CommentaryGenerationError`.
+
+`cli.py`'s `commentary matchups`/`commentary recap` subcommands gained a `--generate` flag. `run_commentary_matchups`/`run_commentary_recap` gained `generate: bool = False` and an injectable `commentary_client` parameter (mirroring the existing `provider` injection pattern): when `generate` is `False` (default), behavior is unchanged (prints the raw prompt(s)); when `True`, each prompt is sent through `CommentaryClient.generate(...)` and the generated text is returned instead (one call per prompt — so `--per-matchup --generate` makes one API call per matchup). `main()` passes `args.generate` through and added `CommentaryGenerationError` to its existing `except (SleeperAPIError, ValueError)` handler so a failed generation prints a friendly `Error: ...` and exits 1 instead of an unhandled traceback.
+
+**Tests:** `tests/commentary/test_client.py` (6 new tests, all against an injected fake `messages.create`, no live API call) — text-block concatenation, non-text-block skipping, default model/effort/message-shape assertions, explicit override passthrough, empty-response and wrapped-API-error `CommentaryGenerationError` cases. `tests/test_cli.py` gained a `FakeCommentaryClient` fixture and 8 new tests: `--generate` flag parsing on both sub-subcommands (incl. its `False` default), `run_commentary_matchups`/`run_commentary_recap` returning generated text instead of the prompt (combined and per-matchup call-count cases), and a `main()` end-to-end case with `CommentaryClient` monkeypatched to the fake. Full suite **998 passed**; `ruff check` clean on all touched files.
+
+**Assumptions:** effort/model are ordinary keyword arguments with the billing-decision values as defaults, not hardcoded — a caller can override either per-call. No `thinking` parameter is set (Opus 4.8 does not think by default when omitted); commentary generation didn't seem to warrant extended-thinking cost given `effort="high"` already governs response depth. `--generate` makes one Anthropic API call per prompt each invocation (no caching/retries added beyond the SDK's own default retry-on-429/5xx behavior) since 093's design doc did not call for either.
+
+**Follow-up candidates (not filed):** batching per-matchup `--generate` calls into a single request if per-matchup Anthropic spend becomes a concern; surfacing `response.usage`/cost in CLI output for cost visibility; a config knob for `model`/`effort` instead of only code-level keyword overrides.
+
+---
+
+## Epic 9 — Waiver-Wire Decision Support
+
+Triggered by running a real 2026 week-1 free-agent board and finding the
+output unusable: the top of the CLI's ranking was Tyreek Hill, Kareem Hunt
+and Zach Ertz — none of them on an NFL roster — and the board was topped by
+quarterbacks and kickers in one-QB leagues. Four separate defects, each
+measured on live 2026 data before being fixed, plus the three context
+layers the board was missing.
+
+### FFA-095 — League-Wide Replacement Population for Waiver Rankings
+**Owner:** Data Scientist
+**Depends on:** FFA-068 (player value / VORP), FFA-092 (waiver rankings)
+
+`build_waiver_wire_rankings` passed only `free_agent_pool` to
+`build_player_value_metrics`, which silently redefined "replacement level"
+as *the last startable player among free agents* rather than *in the
+league*. Because the free-agent pool is the entire unrostered Sleeper
+catalog, its tail is full of players who will never take a snap, so the bar
+collapsed. Measured on 2026 week 1, 12-team: replacement ppg went
+`QB 11.3 / RB 1.9 / TE 5.4` (wire) vs `QB 17.5 / RB 8.5 / TE 6.7` (league).
+The RB case is the clearest — the "last startable RB" was the 36th-best
+*unrostered* RB at 1.92 ppg. This inflated positional VORP and made the
+cross-position ordering an artifact of which position had the longer junk
+tail.
+
+New keyword `replacement_population` (a second pool-shaped frame, normally
+`build_free_agent_pool([], ...)`). The union is projected and valued
+together; rostered players are then dropped and only free agents returned.
+`waiver_rank` is re-derived over the filtered rows using
+`player_value._assign_value_ranks`' exact rule (competition "1224" ranking
+on `points_above_replacement` rounded to 6dp), so it stays a rank among
+*claimable* players rather than a sparse remnant of a league-wide rank.
+Default is `None` = original behavior, so no existing caller changes.
+
+Documented knock-on effect: with a league-wide population the
+positional-mean fallback prior for a zero-game player also becomes
+league-wide. That is the consistent choice once the frame of reference is
+the league, and it is tested explicitly.
+
+**Tests:** `tests/players/test_waiver_rankings.py` — bar rises and rostered
+players are not returned (isolated on the one player whose projection is
+population-independent: zero games + a trusted prior); `waiver_rank` stays
+a 1..n prefix; the fallback-prior widening is asserted with hand arithmetic
+(`mean(9.0, 20.0, 18.0, 16.0) = 15.75`); an empty `replacement_population`
+is frame-equal to the default.
+
+### FFA-096 — Minimum Prior-Season Games Guard
+**Owner:** Data Scientist
+**Depends on:** FFA-090 (ROS projection), FFA-092
+
+`prior_season_ppg` had no sample-size guard: a one-game prior was trusted
+exactly like a seventeen-game one. Since `games_to_date = 0` forces the
+blend weight `w` to exactly zero, that one game *became* the whole
+projection. Concretely, Phil Mafah carried a 9.90 ppg prior earned in a
+single week-18 2025 appearance and floated up the board above genuinely
+productive players.
+
+New `min_prior_games` keyword (`DEFAULT_MIN_PRIOR_GAMES = 4`). A player
+below the threshold is **not dropped** and his `prior_season_ppg` is still
+reported — the guard nulls only the *resolved* prior, which then falls back
+to the positional mean exactly as for a player with no prior season at all.
+New output column `prior_season_games` so a board can show how thin the
+sample is. `min_prior_games=0` disables the guard.
+
+**Behavior change:** this is on by default, so a projection built on a
+1-3 game prior now differs from before. Two existing toy tests asserted the
+old behavior; the fixture was widened from 2 to 4 identical prior weeks so
+the documented arithmetic is unchanged (prior ppg is 5.0 either way) and
+the guard case got its own dedicated tests.
+
+**Tests:** same file — the thin-prior fallback with reported-but-untrusted
+raw values; `min_prior_games=0` restoring the untrusted prior; the guard
+reaching the *blended* population too, not just zero-game rows
+(`0.5714 * 9.0 + 0.4286 * 30.0 = 18.0` unguarded vs `9.0` guarded);
+negative-value rejection.
+
+### FFA-097 — Promote `build_robust_id_crosswalk` into the Package
+**Owner:** Data Engineer
+**Depends on:** FFA-062, FFA-074
+
+`cli.build_free_agent_rankings` used `build_id_crosswalk(catalog)` —
+Sleeper's own sparse `gsis_id` field — which matched **111 of 615**
+NFL-signed free agents in a measured 12-team league (RB 12/108, WR 26/222).
+An unresolved free agent gets `has_crosswalk = False` and therefore no
+projection at all, so this removed four fifths of the wire from the board
+rather than degrading it gracefully. The DynastyProcess union resolved
+**520 of 615**.
+
+That union already existed as `build_robust_id_crosswalk` but lived in
+`scripts/player_analysis.py`, unreachable from the package. Moved verbatim
+to `players/crosswalk.py` (its network/cache imports are function-local so
+the module stays otherwise pure); `player_analysis.py` now imports it and
+its two now-unused imports plus `requests` were dropped.
+
+`build_free_agent_rankings`/`run_free_agents` gained an injectable
+`crosswalk` parameter mirroring the existing `provider` seam, so a test can
+stay fully offline and a multi-league run can build the crosswalk once.
+
+### FFA-098 — Carry Opportunity Columns Through to the Waiver Board
+**Owner:** Data Engineer
+**Depends on:** FFA-087 (provider opportunity columns), FFA-092
+
+FFA-087 carried ten opportunity columns through the nflverse provider and
+into the cache, but `build_scored_player_weeks` filtered them to a
+hardcoded tuple of three (`target_share`, `air_yards_share`, `wopr`) plus
+`targets`/`carries`, and the waiver board surfaced none of them. Replaced
+with `CARRIED_OPPORTUNITY_COLUMNS` covering all ten, with a test asserting
+it stays a superset of the provider's own `OPPORTUNITY_COLUMNS` so the two
+cannot drift.
+
+`build_free_agent_ros_projections` now emits `OPPORTUNITY_SUMMARY_COLUMNS`
+— ten **per-game** figures over the observed weeks. Share/ratio columns
+(already per-game rates) average across weeks; volume and EPA columns are
+totals divided by `games_to_date`, so a week a receiver played and drew
+zero targets is a real zero rather than a skipped row. These are
+descriptive only and feed no projection: they exist so a reader can tell a
+one-game spike on two targets and a long touchdown from a one-game spike on
+eleven targets — the "touchdown trap" `ros_projection.py`'s own docstring
+names but, pricing in points space, inherits.
+
+nflverse's weekly player stats carry **no snap counts** at any stage, so no
+snap-share column is available.
+
+**Tests:** per-game summary arithmetic for both column families incl. the
+zero-target-week case; NaN (not a missing column) when the source lacks
+them; NaN for unplayed and uncrosswalked players; survival into the ranking
+output.
+
+### FFA-099 — Opponent Strength, Defense-vs-Position and Schedule Context
+**Owner:** Data Scientist
+**Depends on:** FFA-073 (nflverse schedule client/cache), FFA-092
+
+New `players/opponent_strength.py`. The schedule client and cache from
+FFA-073 already existed but had **never been populated** —
+`.cache/nflverse/games.csv` did not exist, so no future-week opponent was
+reachable. (nflverse's `opponent_team` on the weekly stats covers completed
+weeks only.) `build_scored_player_weeks` also now carries
+`CARRIED_CONTEXT_COLUMNS = ("team", "opponent_team")` so realized points
+can be attributed to the defense that allowed them.
+
+- `normalize_schedule(games, season)` — one row per game becomes two
+  team-week rows, regular season only, with `implied_team_total` derived
+  from `total_line`/`spread_line` (nflverse states the spread from the
+  **home** team's perspective).
+- `bye_weeks(schedule, season_end_week)` — a team's bye is the week it has
+  no row.
+- `build_defense_vs_position(...)` — fantasy points allowed per game per
+  `(defense, position)`, scored with the **league's own** settings (a PPR
+  and a standard league genuinely have different defense-vs-WR rankings),
+  divided by the positional league mean and then shrunk toward 1.0 by
+  `(n * raw + k) / (n + k)`. At the default `k = 6` a week-2 defense
+  carries 25% of its raw signal. Raw early-season DvP is noise, and early
+  season is exactly when a waiver board is consulted.
+- `add_matchup_context(...)` — appends `week_opponent`, `week_is_home`,
+  `week_implied_team_total`, `week_dvp_multiplier`,
+  `matchup_adjusted_ppg`, `bye_week`, `remaining_schedule_multiplier`,
+  `remaining_games_scheduled`, `schedule_adjusted_ros_points`.
+  `remaining_games_scheduled` is the first **bye-aware** games count in the
+  pipeline — `waiver_rankings`' `remaining_games` is a schedule-blind
+  constant for every player, an overstatement that module's docstring
+  already flagged.
+
+**`projected_ppg` is never overwritten** (asserted by a test): every
+adjusted figure is a separate column, because `k` is an unfitted prior —
+no backtest in this repo measures defense-vs-position accuracy, unlike
+`n0`. Documented as a follow-up ticket.
+
+Measured availability: week-2 Vegas lines were present on all 16 games but
+only **48 of 272** 2026 regular-season games carried one, so implied totals
+inform the this-week view and are `NaN` for the rest of the season — the
+honest representation rather than an extrapolated number.
+
+`SLEEPER_TO_NFLVERSE_TEAM` handles the only two vocabulary disagreements,
+verified against the full 2026 catalog and schedule: `LAR -> LA` and the
+legacy `OAK -> LV`.
+
+**Tests:** `tests/players/test_opponent_strength.py`, 19 tests — the
+implied-total sign convention in both directions (and that the two sides
+sum to the total), postseason exclusion, bye derivation, the module
+docstring's hand-checked DvP worked example, shrinkage monotonicity,
+position-group summing within a week, no-opponent rows ignored, the
+`projected_ppg` no-overwrite guarantee, unsigned/bye/no-projection cases,
+and empty inputs. Two real bugs were caught here: a team on bye in the
+target week with nothing left to play was misread as an unknown team, and
+`schedule_adjusted_ros_points` returned `NaN` instead of `0.0` at zero
+games remaining.
+
+### FFA-100 — Roster-Fit Add/Drop Analysis
+**Owner:** Data Scientist
+**Depends on:** FFA-067 (lineup efficiency), FFA-092
+
+New `players/roster_fit.py`. A league-level VORP ranking answers "who are
+the best unrostered players"; a manager is holding "does this player start
+for *me*, and over whom". A tight end 2.5 points above replacement is a
+significant add for the manager starting a replacement-level tight end and
+worth nothing to the manager who already rosters two better ones.
+
+- `optimal_lineup(players, roster_positions)` — exact best startable
+  lineup by projected points, via the same count-vector dynamic program
+  FFA-067 uses and reusing its `START_SLOT_ELIGIBILITY` verbatim (one
+  source of truth for what a `FLEX` accepts). Returns a `LineupSolution`
+  carrying the chosen starters, so two solutions can be differenced to
+  name who was displaced.
+- `build_drop_candidates(...)` — each rostered player's **marginal value**,
+  `best_lineup(roster) - best_lineup(roster - player)`. Zero means the
+  best lineup is unchanged without him. This is deliberately *not* "worst
+  projection": a backup QB at 18.0 ppg in a one-QB league has marginal
+  value 0.0 while an RB at 9.0 does not — tested explicitly.
+- `build_add_drop_candidates(...)` — `starting_ppg_gain`, who the
+  candidate `displaces`, the cheapest `best_drop`, and `net_lineup_gain`
+  for the executable transaction (which can be below `starting_ppg_gain`
+  when the only droppable player is himself a starter, and is never above).
+
+**Why not reuse `build_lineup_efficiency_metrics` directly:** it solves the
+lineup for *realized* weeks and needs `started`/`bench` flags and actual
+points as ground truth. A waiver decision is about weeks that have not
+happened; feeding it a synthetic player-week frame would mean fabricating
+exactly the columns it trusts. Same algorithm, different inputs.
+
+Explicit scope limits in the module docstring: per-game rates not season
+totals, no bye-week or injury planning on the drop side (it names
+FFA-099's `bye_week` as the column to cross-reference), no handcuff logic,
+no FAAB/waiver-priority/roster-size rules. `max_candidates` (default 60)
+caps the search, since one lineup is solved per candidate.
+
+**Tests:** `tests/players/test_roster_fit.py`, 20 tests — the module
+docstring's hand-checked worked example, FLEX preference flipping,
+SUPER_FLEX taking a second QB, unstartable/unprojected players ignored,
+marginal values for all four toy roster slots, the backup-QB case, gain and
+displacement, a candidate who does not crack the lineup, net gain falling
+below starting gain when the drop is a starter, and empty inputs.
+
+### FFA-101 — Persisted Fitted Shrinkage Parameters
+**Owner:** Software Engineer
+**Depends on:** FFA-088 (multi-season corpus), FFA-090
+
+The follow-up `docs/free-agents-cli.md` named and left unimplemented.
+`save_shrinkage_parameters` / `load_shrinkage_parameters` round-trip a
+`ShrinkageParameters` as JSON at
+`.cache/nflverse/shrinkage_parameters.json`. `load_` returns `None` for
+both "no file" and "unreadable file", so the caller's fallback path is the
+same either way — a corrupt fit and a missing fit are equally reasons to
+use the uniform default, and neither should take down a ranking.
+
+New `scripts/fit_shrinkage_parameters.py` runs the fit once over the cached
+seasons (defaults to standard PPR scoring, since `n0` describes how fast a
+position's evidence accumulates and is not very sensitive to the ruleset;
+`--league-id` fits against a real league's settings instead).
+
+`build_free_agent_rankings` now loads the fitted set when present and falls
+back to uniform `DEFAULT_N0 = 3.0` otherwise.
+
+**Tests:** `tests/players/test_ros_projection.py` — round-trip incl.
+nested-directory creation and behavioral equivalence (`n0_for`) rather than
+only field equality; missing file; two corrupt-file shapes; a partial file
+falling back to defaults per-field.
+
+### Epic 9 CLI wiring
+
+`cli.build_free_agent_rankings` now composes all four fixes: robust
+crosswalk (FFA-097), league-wide `replacement_population` (FFA-095), the
+FFA-096 guard via its default, and a loaded fitted parameter set
+(FFA-101). Its docstring's "shrinkage-parameter tradeoff" section was
+rewritten into a "three composition choices" section naming the measured
+impact of each, since all three had previously been documented as
+deliberate simplifications.
+
+**Follow-ups (recorded in AGENTS.md, none blocking):** fit
+`DEFAULT_DVP_SHRINKAGE_GAMES` the way FFA-089/090 fit `n0`; TTL-check the
+three caches; no D/ST at any stage (nflverse carries no team-defense
+player-week rows); bye/injury awareness on FFA-100's drop side.
+
+---
+
+## Epic 10 — Season Dashboard
+
+### FFA-102 — As-of-Week Standings from Matchups
+**Owner:** Data Scientist
+**Depends on:** FFA-033 (season matchup frame), FFA-020 (standings shape)
+
+`build_standings_through_week(season_matchup_df, teams_df, week, *,
+include_playoffs=False)` in `analytics/standings.py`.
+
+The gap it fills was already documented in two places as structural:
+`build_standings`' own docstring ("Sleeper does not split these cumulative
+roster counters by season phase ... phase-specific standings require
+per-week, per-matchup data") and `build_league_week_context`'s ("this
+function cannot derive 'standings as of week N' for an arbitrary past
+week"). Both were true of `build_standings`, which reads Sleeper's running
+roster totals. Neither was true of the data — FFA-033's matchup frame has
+had the week-level granularity since Epic 4. This re-derives every counter
+from it and returns the same `STANDINGS_COLUMNS` shape, so it is a drop-in
+for existing consumers. Both docstrings updated.
+
+**Metric definitions.** Wins/losses/ties counted from
+`winner`/`loser`/`is_tie` (roster IDs, per `season_matchups.py`'s column
+semantics); `points_for`/`points_against` summed from whichever side of the
+pairing the roster sits on; `win_pct` and the `win_pct` → `points_for`
+competition-ranking rule reused unchanged from `build_standings`, via a
+new shared `_competition_ranks` helper.
+
+**Regular season vs. playoffs — explicit**, unlike the two functions it
+sits beside. `include_playoffs` defaults to `False`.
+
+**Incomplete matchups contribute nothing.** A bye (no `roster_2_id`) or an
+unscored week adds no record and no points to either side. Crediting a bye
+team's points against no opposing total would inflate its differential by a
+full game and break the league-wide symmetry that makes `point_diff`
+comparable. A team whose every game is incomplete appears 0-0-0 rather than
+being dropped.
+
+**Tests:** `tests/analytics/test_standings_through_week.py` — 11 tests, each
+with hand-computed arithmetic in its docstring: a four-team/two-week toy
+example, week truncation, ties at half a win, a two-key rank tie ("1224"),
+the playoff switch in both directions, byes and unscored rows, a team with
+no games, week 0, both empty-input cases, and shape-compatibility with
+`build_standings`.
+
+### FFA-105 — Dashboard Bundle Builder
+**Owner:** Data Engineer
+
+`scripts/build_dashboard.py` writes one `bundle.json` covering every league
+and every completed week. A composition script only — every number comes
+from an already-tested package function.
+
+Deliberately does *not* call `cli.build_commentary_inputs`, which also
+builds the player-week fact table (the pipeline's most expensive step) that
+nothing on this page needs. Mirrors `cli.build_free_agent_rankings`'s three
+accuracy-critical choices inline rather than calling it, because the page
+needs the intermediate `scored_weeks` frame for defense-vs-position and for
+rostered-player projections, which that function does not return.
+
+Three bugs found and fixed while validating against live data:
+
+- `add_matchup_context` takes the **cutoff** week and builds context for
+  `week + 1` itself; passing the upcoming week described the week after the
+  one being planned for.
+- The raw `waiver_rank` is computed pre-filter, so the displayed board had
+  gaps (1, 2, 6, 7, 9…) reading as missing players. Added a post-filter
+  `board_rank`; `waiver_rank` is retained.
+- Passing week-0 standings as `previous_standings_df` for a week-1 recap
+  reported every manager but one falling up to eleven places, since before
+  any game every team is tied at rank 1. Week 1 now passes `None`.
+
+Also joins `injury_status`/`injury_body_part` from the Sleeper catalog,
+which the waiver schema carries no field for, and resolves the upcoming
+week's opponent from the raw Sleeper pairing.
+
+**Commentary:** writes each league-week's prompt into the bundle and folds
+in a recap from `<out>/commentary/<slug>_week<N>.md` when one exists. No
+Anthropic API call, so no key and no per-run billing; the Claude session
+doing the refresh writes the recaps. Past weeks persist on disk.
+
+### FFA-106 — Dashboard Page
+**Owner:** Software Engineer
+
+`scripts/dashboard_artifact.py` + `scripts/templates/dashboard.html.tpl`,
+following the `{{DATA}}` template pattern `draft_board_artifact.py`
+established. Split from FFA-105 so iterating on the page does not re-rank
+three leagues of free agents. The bundle is inlined rather than fetched —
+a published Artifact's CSP is hostile to outbound requests, and inlining
+means the page renders complete on first paint.
+
+The page is organized around a real distinction: week-scoped history
+(scoreboard, recap, standings, power rankings, all recomputed for the
+selected week) versus decisions for the week about to be played (waiver
+board, lineup), which deliberately do not follow the week picker.
+
+**Follow-ups filed as READY (FFA-103, FFA-104, FFA-107)** — all three
+measured against live 2026 data, all three worked around at display time in
+`build_dashboard.py` rather than patched in `src/`. FFA-107 in particular
+was found by observing two players with `injury_status: "Out"` placed in a
+recommended starting lineup.
+
+See `docs/dashboard.md` for the refresh workflow and published URL.

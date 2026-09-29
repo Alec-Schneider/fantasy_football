@@ -251,6 +251,81 @@ def build_id_crosswalk_from_player_ids(player_ids: pd.DataFrame) -> pd.DataFrame
     return crosswalk.reset_index(drop=True)
 
 
+def build_robust_id_crosswalk(
+    player_catalog: dict, *, force_refresh_ids: bool = False
+) -> pd.DataFrame:
+    """Build the most complete Sleeper <-> nflverse ID crosswalk available (FFA-097).
+
+    Unions the two single-source builders above, preferring DynastyProcess:
+    :func:`build_id_crosswalk_from_player_ids` covers essentially the whole
+    player universe, while :func:`build_id_crosswalk` (Sleeper's own sparse
+    ``gsis_id`` field) contributes only the players DynastyProcess has not
+    synced yet -- typically very recent signings.
+
+    Preferring the union is not a marginal improvement for a free-agent
+    population. Measured against the 2026 week-1 catalog, the
+    Sleeper-catalog-only crosswalk resolved **111 of 615** NFL-signed free
+    agents in a 12-team league (RB 12/108, WR 26/222); the union resolved
+    **520 of 615**. Every unresolved player reaches
+    :func:`~fantasy_analyzer.players.waiver_rankings.build_waiver_wire_rankings`
+    with ``has_crosswalk = False`` and therefore no projection at all, so a
+    sparse crosswalk does not degrade a waiver ranking gracefully -- it
+    silently removes four fifths of the wire from it.
+
+    This function lived in ``scripts/player_analysis.py`` until FFA-097
+    moved it here, so that CLI surfaces (not just that one script) can use
+    it; that script now imports it from this module.
+
+    Args:
+        player_catalog: The raw Sleeper player catalog dict, as returned by
+            :func:`fantasy_analyzer.sleeper.cache.get_players_cached`. Used
+            for the Sleeper-side union source.
+        force_refresh_ids: Re-download DynastyProcess's ``db_playerids.csv``
+            instead of reading the local cache. The cache is never
+            TTL-checked (see ``id_crosswalk_cache.py``), so pass ``True``
+            when a recent signing must resolve.
+
+    Returns:
+        A :data:`CROSSWALK_COLUMNS`-shaped DataFrame, one row per Sleeper
+        player either source can resolve, with DynastyProcess's mapping
+        winning on overlap. Falls back to the Sleeper-catalog-only crosswalk
+        alone (with a warning on stderr) if DynastyProcess's asset cannot be
+        fetched -- coverage degrades rather than the whole pipeline failing.
+    """
+    # Imported here rather than at module scope: this module is otherwise
+    # pure (catalog dict / DataFrame in, DataFrame out) and is imported by
+    # code that must not pull in the network/caching layer transitively.
+    import sys
+
+    import requests
+
+    from fantasy_analyzer.players.id_crosswalk_cache import get_player_ids_cached
+    from fantasy_analyzer.players.id_crosswalk_client import PlayerIdCrosswalkClient
+
+    sleeper_only = build_id_crosswalk(player_catalog)
+
+    try:
+        raw_ids = get_player_ids_cached(
+            PlayerIdCrosswalkClient(), force_refresh=force_refresh_ids
+        )
+        dynastyprocess = build_id_crosswalk_from_player_ids(raw_ids)
+    except (requests.exceptions.RequestException, ValueError) as exc:
+        print(
+            f"WARNING: DynastyProcess ID crosswalk unavailable ({exc}); "
+            "falling back to the Sleeper-catalog-only crosswalk (lower "
+            "player coverage).",
+            file=sys.stderr,
+        )
+        return sleeper_only
+
+    # DynastyProcess wins on overlap (concat + keep="last"): it is the
+    # actively-maintained, near-complete source; the Sleeper-only rows fill
+    # in only what DynastyProcess does not cover.
+    combined = pd.concat([sleeper_only, dynastyprocess], ignore_index=True)
+    combined = combined.drop_duplicates(subset="sleeper_player_id", keep="last")
+    return combined.reset_index(drop=True)
+
+
 def gsis_to_sleeper_lookup(crosswalk: pd.DataFrame) -> dict[str, str]:
     """Build a fast ``gsis_id -> sleeper_player_id`` lookup from a crosswalk.
 

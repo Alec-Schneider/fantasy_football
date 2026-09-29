@@ -6,7 +6,7 @@ This module is pure composition (FFA-023): it wires together an already-built
 :func:`~fantasy_analyzer.analytics.standings.build_scoring_summary`, and
 :func:`~fantasy_analyzer.league.season.derive_season_boundaries` into the
 ergonomic ``analysis.league_summary()`` / ``analysis.standings()`` interface
-described in AGENTS.md's "Core Domain Objects" / Epic 3 sections. It performs
+described in AGENTS.md's "Normalized Data Contracts" section. It performs
 no network access and introduces no new metric definitions of its own --
 see ``analytics/standings.py`` and ``league/season.py`` for the metric
 definitions, ranking rules, zero-games handling, and regular-season-vs-

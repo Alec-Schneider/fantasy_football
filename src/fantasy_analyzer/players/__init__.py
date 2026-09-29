@@ -4,6 +4,7 @@ from fantasy_analyzer.players.crosswalk import (
     CROSSWALK_COLUMNS,
     build_id_crosswalk,
     build_id_crosswalk_from_player_ids,
+    build_robust_id_crosswalk,
     gsis_to_sleeper_lookup,
     sleeper_to_gsis_lookup,
 )
@@ -69,6 +70,14 @@ from fantasy_analyzer.players.draft_report import (
     DraftGradeWeights,
     build_draft_talking_points,
     build_team_draft_grades,
+)
+from fantasy_analyzer.players.free_agents import (
+    DEFAULT_EXCLUDED_STATUSES,
+    FREE_AGENT_POOL_COLUMNS,
+    build_fantasypros_ownership_lookup,
+    build_free_agent_pool,
+    resolve_startable_positions,
+    rostered_player_ids,
 )
 from fantasy_analyzer.players.id_crosswalk_cache import (
     DEFAULT_CACHE_DIR as ID_CROSSWALK_DEFAULT_CACHE_DIR,
@@ -136,6 +145,17 @@ from fantasy_analyzer.players.nflverse_schedule_cache import (
     refresh_games_cache,
 )
 from fantasy_analyzer.players.nflverse_schedule_client import NflverseScheduleClient
+from fantasy_analyzer.players.opponent_strength import (
+    DEFAULT_DVP_SHRINKAGE_GAMES,
+    DEFENSE_VS_POSITION_COLUMNS,
+    MATCHUP_CONTEXT_COLUMNS,
+    TEAM_WEEK_SCHEDULE_COLUMNS,
+    add_matchup_context,
+    build_defense_vs_position,
+    bye_weeks,
+    normalize_schedule,
+    normalize_team,
+)
 from fantasy_analyzer.players.performance import (
     BOOM_BUST_THRESHOLD_STDEVS as PLAYER_BOOM_BUST_THRESHOLD_STDEVS,
 )
@@ -206,20 +226,68 @@ from fantasy_analyzer.players.ros_backtest import (
 )
 from fantasy_analyzer.players.ros_projection import (
     DEFAULT_N0,
+    DEFAULT_SHRINKAGE_PARAMETERS_PATH,
     PROJECTION_COLUMN,
     ShrinkageParameters,
     add_ros_projection,
     fit_shrinkage,
+    load_shrinkage_parameters,
     project_ppg,
     run_shrinkage_backtest,
+    save_shrinkage_parameters,
+)
+from fantasy_analyzer.players.roster_fit import (
+    ADD_DROP_COLUMNS,
+    DROP_CANDIDATE_COLUMNS,
+    LineupSolution,
+    build_add_drop_candidates,
+    build_drop_candidates,
+    build_roster_projection_frame,
+    optimal_lineup,
+    starting_slots,
 )
 from fantasy_analyzer.players.scoring import (
     SCORING_KEY_TO_STAT_COLUMNS,
     ScoringResult,
     calculate_fantasy_points,
 )
+from fantasy_analyzer.players.waiver_rankings import (
+    CONFIDENCE_TIER_LOW_MAX_GAMES,
+    CONFIDENCE_TIER_MEDIUM_MAX_GAMES,
+    DEFAULT_MIN_PRIOR_GAMES,
+    FREE_AGENT_PROJECTION_COLUMNS,
+    OPPORTUNITY_SUMMARY_COLUMNS,
+    WAIVER_WIRE_RANKING_COLUMNS,
+    build_free_agent_ros_projections,
+    build_projection_performance_frame,
+    build_waiver_wire_rankings,
+    confidence_tier,
+)
 
 __all__ = [
+    "ADD_DROP_COLUMNS",
+    "DEFAULT_DVP_SHRINKAGE_GAMES",
+    "DEFAULT_MIN_PRIOR_GAMES",
+    "DEFAULT_SHRINKAGE_PARAMETERS_PATH",
+    "DEFENSE_VS_POSITION_COLUMNS",
+    "DROP_CANDIDATE_COLUMNS",
+    "LineupSolution",
+    "MATCHUP_CONTEXT_COLUMNS",
+    "OPPORTUNITY_SUMMARY_COLUMNS",
+    "TEAM_WEEK_SCHEDULE_COLUMNS",
+    "add_matchup_context",
+    "build_add_drop_candidates",
+    "build_defense_vs_position",
+    "build_drop_candidates",
+    "build_robust_id_crosswalk",
+    "build_roster_projection_frame",
+    "bye_weeks",
+    "load_shrinkage_parameters",
+    "normalize_schedule",
+    "normalize_team",
+    "optimal_lineup",
+    "save_shrinkage_parameters",
+    "starting_slots",
     "PLAYER_WEEK_IDENTITY_COLUMNS",
     "PlayerStatsProvider",
     "validate_player_week_columns",
@@ -370,4 +438,18 @@ __all__ = [
     "build_matchup_player_contributions",
     "build_positional_matchup_advantage",
     "reconcile_matchup_points",
+    "FREE_AGENT_POOL_COLUMNS",
+    "DEFAULT_EXCLUDED_STATUSES",
+    "resolve_startable_positions",
+    "rostered_player_ids",
+    "build_free_agent_pool",
+    "build_fantasypros_ownership_lookup",
+    "FREE_AGENT_PROJECTION_COLUMNS",
+    "WAIVER_WIRE_RANKING_COLUMNS",
+    "CONFIDENCE_TIER_LOW_MAX_GAMES",
+    "CONFIDENCE_TIER_MEDIUM_MAX_GAMES",
+    "confidence_tier",
+    "build_free_agent_ros_projections",
+    "build_waiver_wire_rankings",
+    "build_projection_performance_frame",
 ]
