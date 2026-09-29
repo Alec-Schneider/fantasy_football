@@ -47,8 +47,7 @@ class LeagueSnapshot:
 
     Assembles the outputs of ``league.settings``, ``league.teams``, and
     ``league.players`` into the common input downstream analytics should
-    consume, per AGENTS.md's Core Domain Objects. Nothing here requires
-    further raw Sleeper endpoint joins.
+    consume. Nothing here requires further raw Sleeper endpoint joins.
 
     Attributes:
         league: Normalized league metadata, scoring, and roster settings.
