@@ -68,6 +68,32 @@ fantasy-analyzer leagues schneidbaby --season 2025
 
 # Print standings and scoring summary for a league.
 fantasy-analyzer summary <league_id> --total-weeks 18
+
+# Print a ready-to-paste commentary prompt for a week's matchups.
+fantasy-analyzer commentary matchups <league_id> --week 3 --total-weeks 18
+
+# ...or one prompt per matchup instead of a single combined prompt.
+fantasy-analyzer commentary matchups <league_id> --week 3 --total-weeks 18 --per-matchup
+
+# Print a ready-to-paste commentary prompt for the league-wide weekly recap.
+fantasy-analyzer commentary recap <league_id> --week 3 --total-weeks 18
+
+# Both commentary commands accept --tone (default: witty; also supports
+# straightforward). By default neither calls an LLM -- they only print
+# prompt text to paste into claude.ai or hand to an agent session.
+
+# ...or pass --generate to call the Claude API directly and print the
+# generated commentary instead of the raw prompt (requires ANTHROPIC_API_KEY
+# in the environment; uses claude-opus-4-8 at effort="high" by default).
+fantasy-analyzer commentary recap <league_id> --week 3 --total-weeks 18 --generate
+
+# Rank a league's free agents by projected rest-of-season points above
+# replacement, as of after week 3. See docs/free-agents-cli.md for the full
+# argument reference and a caveat on the shrinkage projection this uses.
+fantasy-analyzer free-agents <league_id> --season 2026 --week 3
+
+# ...filter to one position, limit to the top N, or print JSON instead.
+fantasy-analyzer free-agents <league_id> --season 2026 --week 3 --position WR --top 10 --format json
 ```
 
 ## Notebook

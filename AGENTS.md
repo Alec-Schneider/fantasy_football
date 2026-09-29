@@ -78,24 +78,6 @@ Do not tightly couple advanced player analysis to an undocumented Sleeper endpoi
 
 Keep data access separate from analytics.
 
-Recommended structure:
-
-```text
-fantasy-football-analyzer/
-├── pyproject.toml
-├── README.md
-├── AGENTS.md
-├── src/
-│   └── fantasy_analyzer/
-│       ├── __init__.py
-│       ├── sleeper/
-│       ├── league/
-│       ├── matchups/
-│       ├── analytics/
-│       └── players/
-└── tests/
-```
-
 Suggested responsibilities:
 
 ```text
@@ -162,55 +144,12 @@ The primary development user is `schneidbaby`, but code must not hard-code that 
 
 ---
 
-# Core Domain Objects
-
-The application should converge on a normalized league representation such as:
-
-```python
-snapshot.league
-snapshot.teams_df
-snapshot.users_df
-snapshot.rosters_df
-snapshot.players_df
-snapshot.scoring_settings
-snapshot.roster_positions
-```
-
-A `LeagueSnapshot` or similar abstraction should become the common input to downstream analytics.
-
----
-
-# Canonical Matchup Dataset
-
-Matchup normalization should ultimately produce a DataFrame with fields similar to:
-
-```text
-season
-week
-is_playoff
-matchup_id
-
-roster_1_id
-roster_2_id
-
-owner_1
-owner_2
-
-points_1
-points_2
-
-winner
-loser
-margin
-```
-
-The exact schema may evolve, but downstream analytics should consume normalized data rather than raw Sleeper API responses.
-
----
-
 # Canonical Player-Week Dataset
 
-Advanced player analysis should eventually converge on a player-week fact table similar to:
+Provider output and the player-week fact table converge on this schema. It is
+normative: `players/provider.py` and `players/player_week.py` cite it as the
+contract every provider must satisfy, so it is stated here rather than in any
+one module.
 
 ```text
 season
@@ -240,7 +179,21 @@ fantasy_points
 
 Do not assume the above list is exhaustive.
 
-Fantasy points should ultimately be calculated using the league's actual Sleeper scoring settings rather than relying only on generic provider fantasy-point columns.
+---
+
+# Normalized Data Contracts
+
+A `LeagueSnapshot` or similar abstraction should become the common input to
+downstream analytics. Matchup normalization and player-week analysis should
+each converge on a single canonical frame. The concrete schemas live in the
+code and its docstrings (`league/snapshot.py`, `matchups/outcomes.py`,
+`players/`); the contracts that the code cannot state for itself are:
+
+- Downstream analytics should consume normalized data rather than raw
+  Sleeper API responses.
+- Fantasy points should ultimately be calculated using the league's actual
+  Sleeper scoring settings rather than relying only on generic provider
+  fantasy-point columns.
 
 ---
 
@@ -298,12 +251,8 @@ Owns:
 - positional strength
 - power-ranking methodology
 
-Every non-trivial metric must have:
-
-1. a written mathematical or procedural definition
-2. at least one hand-checkable toy example
-3. tests for ties and missing values where applicable
-4. explicit regular-season versus playoff behavior
+Every non-trivial metric must meet the analytics bar in Definition of Done
+below. This applies to metrics in `players/` as much as `analytics/`.
 
 ---
 
@@ -363,209 +312,100 @@ Analytics tickets must additionally satisfy:
 
 ---
 
-# Epic 1 — Sleeper Client
+# Epics 1–7 — Shipped
 
-- **FFA-001** — Bootstrap Python Project — DONE (`0c2889a`) — see PROGRESS.md
-- **FFA-002** — Add Base Sleeper HTTP Client — DONE (`e7dcbf5`) — see PROGRESS.md
-- **FFA-003** — Add User and League Discovery — DONE (`7f1d689`) — see PROGRESS.md
-- **FFA-004** — Add Core League Endpoints — DONE (`a9ef6ec`) — see PROGRESS.md
-- **FFA-005** — Add Historical Season Endpoints — DONE (`d3db957`) — see PROGRESS.md
-- **FFA-006** — Add Cached Sleeper Player Catalog — DONE (`a33d0d7`) — see PROGRESS.md
-- **FFA-007** — Add Sleeper API Contract Fixtures — DONE (absorbed into per-endpoint commits) — see PROGRESS.md
+All of Epics 1 through 7 are DONE: FFA-001–FFA-057 (Sleeper client, league
+normalization, league summary, matchup normalization, matchup analytics,
+advanced league analytics), FFA-060–FFA-074 and FFA-084–FFA-086 (player and
+position analytics). Per-ticket acceptance criteria, implementation notes and
+commit SHAs are archived in `PROGRESS.md`.
 
 ---
 
-# Epic 2 — Normalize League Data
+# Epic 8 — League & Matchup Commentary
 
-- **FFA-010** — Build Team and Owner Mapping — DONE (`bf0bf79`) — see PROGRESS.md
-- **FFA-011** — Normalize League Settings — DONE (`ef3340e`) — see PROGRESS.md
-- **FFA-012** — Normalize Player Metadata — DONE (`63d40df`) — see PROGRESS.md
-- **FFA-013** — Build LeagueSnapshot Service — DONE (`e5e5428`) — see PROGRESS.md
-- **FFA-014** — Add Normalized Data Tests — DONE (absorbed into FFA-010/011/012/013 commits) — see PROGRESS.md
-
----
-
-# Epic 3 — League Summary
-
-- **FFA-020** — Build Base Standings — DONE (`f1e4ce1`) — see PROGRESS.md
-- **FFA-021** — Add Scoring Summary Metrics — DONE (`069c82c`) — see PROGRESS.md
-- **FFA-022** — Identify Regular Season and Playoff Boundaries — DONE (`3423eef`) — see PROGRESS.md
-- **FFA-023** — Build League Summary API — DONE (`b0afc8a`) — see PROGRESS.md
-- **FFA-024** — Add CLI League Summary — DONE (`ac37952`) — see PROGRESS.md
+FFA-090–FFA-094 are DONE — see `PROGRESS.md`. See
+`docs/commentary_plan.md` for the full design. Two notes that outlived the
+tickets: FFA-091 intentionally omits the milestone/clinch-elimination field
+(no playoff-boundary logic exists yet to support it), and FFA-094 settled on
+default model `claude-opus-4-8` at `effort="high"`.
 
 ---
 
-# Epic 4 — Normalize Matchups
+# Epic 9 — Waiver-Wire Decision Support
 
-- **FFA-030** — Load Full Season Matchups — DONE (`ecb0182`) — see PROGRESS.md
-- **FFA-031** — Pair Opponents by Matchup ID — DONE (`0522af8`) — see PROGRESS.md
-- **FFA-032** — Normalize Matchup Outcomes — DONE (`00dba42`) — see PROGRESS.md
-- **FFA-033** — Build Season Matchup DataFrame — DONE (`d4b9d4e`) — see PROGRESS.md
-- **FFA-034** — Reconcile Matchups to Standings — DONE (`c718115`) — see PROGRESS.md
-
----
-
-# Epic 5 — User-vs-User Matchup Analytics
-
-- **FFA-040** — Head-to-Head Records — DONE (`ea5307f`) — see PROGRESS.md
-- **FFA-041** — Head-to-Head Matrix — DONE (`429e512`) — see PROGRESS.md
-- **FFA-042** — Rivalry and Margin Statistics — DONE (`ecedc16`) — see PROGRESS.md
-- **FFA-043** — Add Matchup History Query API — DONE (`610a9e4`) — see PROGRESS.md
-- **FFA-044** — Split Regular Season and Playoff H2H — DONE (`99ecf96`) — see PROGRESS.md
+Hardens the FFA-091/092/093 free-agent pipeline (four defects found while
+running a real 2026 week-1 board, all measured before being fixed) and adds
+the three context layers a waiver decision actually needs: usage, opponent,
+and the manager's own roster. FFA-095–FFA-101 are DONE — see `PROGRESS.md`.
 
 ---
 
-# Epic 6 — Advanced League Analytics
+# Epic 10 — Season Dashboard
 
-- **FFA-050** — Weekly Scoring Ranks — DONE (`778a56b`) — see PROGRESS.md
-- **FFA-051** — All-Play Records — DONE (`4fe92e9`) — see PROGRESS.md
-- **FFA-052** — Expected Wins and Schedule Luck — DONE (`c30aa36`) — see PROGRESS.md
-- **FFA-053** — Team Consistency Metrics — DONE (`caefabc`) — see PROGRESS.md
-- **FFA-054** — Strength of Schedule — DONE (`df35d07`) — see PROGRESS.md
-- **FFA-055** — Normalize Playoff Bracket and Final Placements — DONE (`5b5acd1`) — see PROGRESS.md
-- **FFA-056** — League Power Ranking Model — DONE (`d2d9718`) — see PROGRESS.md
-- **FFA-057** — Advanced League Analytics API — DONE (`f134398`) — see PROGRESS.md
+One published page covering all three leagues: week-by-week results,
+standings, recaps and power rankings, plus the waiver board and lineup call
+for the week about to be played. See `docs/dashboard.md` for the refresh
+workflow and the published URL.
 
----
+- **FFA-102** — As-of-Week Standings from Matchups — DONE — `build_standings_through_week`
+  in `analytics/standings.py`. `build_standings` reads Sleeper's
+  season-cumulative roster counters and structurally cannot describe a past
+  week; this re-derives every counter from the week-level matchup frame.
+  Explicit regular-season-vs-playoff switch, explicit bye/incomplete rule.
+  Tests in `tests/analytics/test_standings_through_week.py`.
+- **FFA-105** — Dashboard Bundle Builder — DONE — `scripts/build_dashboard.py`
+  composes the existing pipelines into one JSON bundle per season.
+- **FFA-106** — Dashboard Page — DONE — `scripts/dashboard_artifact.py` plus
+  `scripts/templates/dashboard.html.tpl`, following the `{{DATA}}` pattern
+  `draft_board_artifact.py` established.
 
-# Epic 7 — Advanced Player / Position Analytics
+## READY — found while building the dashboard, measured, not yet fixed
 
-- **FFA-060** — Define Player Data Provider Interface — DONE (`098cff1`) — see PROGRESS.md
-- **FFA-061** — Add nflverse Weekly Stat Provider — DONE (`635eff8`) — see PROGRESS.md
-- **FFA-062** — Build Sleeper to nflverse Player ID Crosswalk — DONE (`85058c4`, extended with a DynastyProcess-backed source `FFA-074`) — see PROGRESS.md
-- **FFA-063** — Build League-Specific Fantasy Scoring Engine — DONE (`2513d33`) — see PROGRESS.md
-- **FFA-064** — Build Player-Week Fact Table — DONE (`a106cf9`, extended with a league-wide free-agent-inclusive builder `FFA-074`) — see PROGRESS.md
-- **FFA-065** — Player Performance Metrics — DONE (`60e6c9d`) — see PROGRESS.md
-- **FFA-066** — Position Strength Analytics — DONE (`0774b17`) — see PROGRESS.md
-- **FFA-067** — Optimal Lineup and Roster Efficiency — DONE (`e619eb7`) — see PROGRESS.md
-- **FFA-068** — Replacement-Level Player Value — DONE (`eff25d7`, hardened `b18c5e0`) — see PROGRESS.md
-- **FFA-071** — Player Analytics API — DONE (`6771979`) — see PROGRESS.md
-- **FFA-072** — Projection and Ranking Provider Interface — DONE (`7d314af`) — see PROGRESS.md
-- **FFA-069** — Matchup Player Contribution Analysis — DONE (`3289bb0`) — see PROGRESS.md
-- **FFA-070** — Manager Lineup Tendencies — DONE (`1d6b98b`) — see PROGRESS.md
-- **FFA-073** — League-Wide Composite Player Value Ranking — DONE (`570429b`, rebalanced `32dbcaa`, wired `6629f59`) — see PROGRESS.md
-- **FFA-074** — League-Wide Free-Agent Player Pool & ID-Crosswalk Coverage Fix — DONE (`cf40276`, `8e357fa`, `7db0ba6`, `4d7f45f`) — see PROGRESS.md
-- **FFA-084** — Fix Draft Pick-Value Sign Bug and Convert to a Value Scale — DONE — see PROGRESS.md
-- **FFA-085** — Fitted Real-Points Draft Value Curve — DONE — see PROGRESS.md
-- **FFA-086** — Draft Report Phase-Breakdown and Points-Value Explanation — DONE — see PROGRESS.md
+- **FFA-103** — Exclude teamless players from the free-agent pool.
+  Sleeper marks unsigned NFL free agents `status: "Active"` with
+  `team: None`, and `DEFAULT_EXCLUDED_STATUSES` covers only
+  `{inactive, retired}`. A `team.notna()` guard in `build_free_agent_pool`
+  fixes it. Currently worked around by `build_dashboard.py`'s
+  `WAIVER_QUALITY_FILTER`.
+- **FFA-104** — Guard an *absent* prior, not just a thin one.
+  `min_prior_games` (FFA-096) guards a thin prior season but not a missing
+  one, so a player with zero data resolves to the positional mean, which
+  sits above replacement. Same workaround, same place.
+- **FFA-107** — Injury awareness in `roster_fit`.
+  `optimal_lineup`/`build_add_drop_candidates` are projection-only and will
+  start a player who is Out or on a bye — measured on a real roster, where
+  two Out players placed in the recommended starting eleven.
+  `build_dashboard.py` filters them via `UNAVAILABLE_INJURY_STATUSES` before
+  solving; that belongs in the package, alongside the `bye_week` column
+  FFA-099 already produces.
+- **FFA-108** — `_completed_weeks` calls a week complete before it is.
+  `scripts/build_dashboard.py`'s rule is "every contested pairing has
+  non-null, non-zero points on both sides", which a week still missing its
+  Monday night game satisfies — every team already has *some* points.
+  Measured on 2026-09-21: the page published week 2 as final before MNF,
+  and **two games carried the wrong winner** (NWC JuniataGangsta/Philjitsu,
+  Zipline MarkVanc/rjbaxendale10), which propagated into standings, power
+  rankings and the written recaps. The already-cached nflverse schedule is
+  an exact signal — `.cache/nflverse/games.csv` had 16/16 week-2 games
+  scored once MNF landed, against 0/16 for week 3 — so the fix is to
+  require every scheduled game in the week to carry a result before the
+  week counts. Until then `docs/dashboard.md`'s "refresh on Tuesday"
+  instruction is load-bearing rather than advisory.
 
----
+Known follow-ups, none blocking:
 
-# Release Boundaries
-
-## V1 MVP
-
-Tickets:
-
-```text
-FFA-001 through FFA-057
-```
-
-V1 should answer:
-
-- what leagues exist
-- league rules and scoring
-- league rosters
-- standings
-- full matchup history
-- user-vs-user records
-- scoring ranks
-- all-play standings
-- expected wins
-- schedule luck
-- consistency
-- strength of schedule
-- playoff results
-- power rankings
-
----
-
-## V1.5 — Player Intelligence
-
-Tickets:
-
-```text
-FFA-060 through FFA-074
-```
-
-Adds:
-
-- player performance
-- positional strength
-- roster efficiency
-- player value
-- matchup player contributions
-- manager tendencies
-- league-wide composite player ranking
-- future projection-provider support
-
----
-
-# Dependency Strategy
-
-Do not parallelize too aggressively at the beginning.
-
-Recommended initial sequence:
-
-```text
-FFA-001
-   |
-FFA-002
-   |
-   +--> FFA-003
-   +--> FFA-004
-   +--> FFA-005
-   +--> FFA-006
-```
-
-Then:
-
-```text
-FFA-004 + FFA-006
-        |
-FFA-010 + FFA-011 + FFA-012
-        |
-      FFA-013
-```
-
-The first useful vertical milestone is:
-
-```text
-FFA-001
-   |
-FFA-002
-   |
-FFA-003 + FFA-004
-   |
-FFA-010 + FFA-011
-   |
-FFA-013
-   |
-FFA-020
-   |
-FFA-023
-
-OUTPUT:
-Working 2025 league summary
-```
-
-The matchup branch can then proceed in parallel:
-
-```text
-FFA-005
-   |
-FFA-030
-   |
-FFA-031
-   |
-FFA-032
-   |
-FFA-033
-  /     \
-Epic 5  Epic 6
-```
-
-Part 7 should begin only after league-specific scoring and matchup structures are trusted.
+- `DEFAULT_DVP_SHRINKAGE_GAMES` (FFA-099) is a documented prior, not a
+  fitted value. No backtest measures defense-vs-position accuracy; fitting
+  it the way FFA-089/090 fit `n0` is the natural next ticket.
+- The three caches (`sleeper/players.json`, `nflverse/player_stats_<season>.csv`,
+  `id_crosswalk/db_playerids.csv`) are still never TTL-checked. A stale
+  catalog silently produces wrong teams and injury statuses.
+- No D/ST projection at any stage: nflverse's weekly player stats carry no
+  team-defense rows, so every board omits the position entirely.
+- FFA-100 has no bye-week or injury awareness on the drop side; it names
+  the column to cross-reference (`bye_week`, from FFA-099) rather than
+  applying it.
 
 ---
 
@@ -573,18 +413,20 @@ Part 7 should begin only after league-specific scoring and matchup structures ar
 
 ## READY
 
-None.
+- **FFA-103** — Exclude teamless players from the free-agent pool.
+- **FFA-104** — Guard an absent prior season, not just a thin one.
+- **FFA-107** — Injury/bye awareness in `roster_fit`.
+- **FFA-108** — `_completed_weeks` calls a week complete before its Monday
+  night game; published two wrong winners on 2026-09-21.
+
+All four are measured, have a documented workaround in
+`scripts/build_dashboard.py`, and are described under Epic 10 above.
 
 ---
 
 ## BACKLOG
 
-```text
 None.
-```
-
-FFA-044, FFA-069, and FFA-070 — the three tickets previously listed here —
-are all DONE; see PROGRESS.md. Nothing currently on the board is BACKLOG.
 
 Tickets become READY when their dependencies are complete and reviewed.
 
@@ -599,12 +441,6 @@ None.
 ## REVIEW
 
 None.
-
----
-
-## DONE
-
-FFA-001 through FFA-057, FFA-060 through FFA-074, FFA-084 through FFA-086 — see PROGRESS.md.
 
 ---
 
