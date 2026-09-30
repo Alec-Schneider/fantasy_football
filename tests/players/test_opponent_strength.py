@@ -17,6 +17,7 @@ from fantasy_analyzer.players.opponent_strength import (
     add_matchup_context,
     build_defense_vs_position,
     bye_weeks,
+    completed_nfl_weeks,
     normalize_schedule,
     normalize_team,
 )
@@ -131,6 +132,70 @@ def test_bye_weeks_from_missing_weeks() -> None:
     # No missing week inside the window -> no bye.
     assert bye_weeks(schedule, season_end_week=2) == {"SF": None, "LA": None}
     assert bye_weeks(pd.DataFrame(), season_end_week=3) == {}
+
+
+# --------------------------------------------------------------------------
+# completed_nfl_weeks (FFA-108)
+# --------------------------------------------------------------------------
+
+
+def _scored_week(week, games, scored, season=2026, game_type="REG"):
+    """``games`` rows for ``week``, of which the first ``scored`` have scores."""
+    return [
+        {
+            "season": season,
+            "game_type": game_type,
+            "week": week,
+            "home_team": f"H{index}",
+            "away_team": f"A{index}",
+            "home_score": 20.0 if index < scored else float("nan"),
+            "away_score": 17.0 if index < scored else float("nan"),
+        }
+        for index in range(games)
+    ]
+
+
+def test_completed_nfl_weeks_requires_every_game_scored() -> None:
+    """The 2026-09-21 case: week 2 had 15 of 16 games final before MNF.
+
+    Week 1 is fully scored, week 2 is missing only its Monday night game,
+    week 3 has not started. Only week 1 is complete.
+    """
+    schedule = pd.DataFrame(
+        _scored_week(1, 16, 16) + _scored_week(2, 16, 15) + _scored_week(3, 16, 0)
+    )
+    assert completed_nfl_weeks(schedule, 2026) == [1]
+
+
+def test_completed_nfl_weeks_once_monday_night_lands() -> None:
+    schedule = pd.DataFrame(
+        _scored_week(1, 16, 16) + _scored_week(2, 16, 16) + _scored_week(3, 16, 0)
+    )
+    assert completed_nfl_weeks(schedule, 2026) == [1, 2]
+
+
+def test_completed_nfl_weeks_needs_both_scores() -> None:
+    """A half-written row (home score only) is not a final."""
+    rows = _scored_week(1, 2, 2)
+    rows[1]["away_score"] = None
+    assert completed_nfl_weeks(pd.DataFrame(rows), 2026) == []
+
+
+def test_completed_nfl_weeks_scopes_to_regular_season_and_season() -> None:
+    schedule = pd.DataFrame(
+        _scored_week(1, 2, 2)
+        + _scored_week(19, 2, 2, game_type="WC")
+        + _scored_week(2, 2, 2, season=2025)
+    )
+    assert completed_nfl_weeks(schedule, 2026) == [1]
+    assert completed_nfl_weeks(schedule, 2025) == [2]
+    assert completed_nfl_weeks(schedule, 1999) == []
+
+
+def test_completed_nfl_weeks_empty_or_scoreless_input() -> None:
+    assert completed_nfl_weeks(pd.DataFrame(), 2026) == []
+    # normalize_schedule's output has no scores; it cannot answer this.
+    assert completed_nfl_weeks(normalize_schedule(GAMES, 2026), 2026) == []
 
 
 # --------------------------------------------------------------------------

@@ -199,6 +199,63 @@ being compared against an above-average full-league prior would be
 inconsistent with the fact that he is, by construction, currently
 unrostered.
 
+Which model produced ``projected_ppg`` (FFA-111)
+--------------------------------------------------------------------------
+
+With ``usage_parameters`` (a fitted
+:class:`~fantasy_analyzer.players.usage_projection.UsageModelParameters`)
+**and** ``scoring_settings``, and a ``scored_weeks`` frame carrying the
+raw stat columns (``build_scored_player_weeks`` carries them), the final
+``projected_ppg`` is the per-position blend
+``a * usage_projected_ppg + (1 - a) * eb_projected_ppg`` -- the
+configuration that won the rolling-origin backtest at every position (see
+``docs/valuation-model.md``). Everything else about the pipeline -- VORP,
+``remaining_games``, ``projected_ros_points`` -- is unchanged and simply
+consumes the blended rate.
+
+``projection_model`` says what happened per row: ``"blend"``; ``"eb"``
+(no usage model, a position it does not cover such as K, or no usage
+projection for the player); ``"absent_prior"`` (FFA-104, below); ``None``
+(nothing could be projected: no crosswalk, or a team defense).
+``eb_projected_ppg`` and ``usage_projected_ppg`` are always both shown, so
+a board can say *why* the two disagree -- most often a touchdown-driven
+start, which ``points_over_expected_per_game`` (points per game minus
+league-scored expected points per game) makes explicit.
+
+``usage`` (``players.usage.load_usage_player_weeks``) is optional. With it
+the snap-share term is used and the ``snap_share*``/``xfp_*`` columns are
+filled; without it the separately fitted no-snap parameter set is used and
+those columns are ``NaN``. ``usage_parameters=None`` reproduces the
+pre-FFA-111 projection exactly (``projected_ppg == eb_projected_ppg``).
+
+Absent prior (FFA-104)
+--------------------------------------------------------------------------
+
+A crosswalked player with **no games to date and no trusted prior**
+(fewer than ``min_prior_games`` prior-season games) used to resolve to the
+positional mean of players who *are* playing. Measured historically
+(nflverse 2015-2025, cutoffs 2-10, scored 2019-2025 with constants fitted
+on earlier seasons only), players in exactly that state who then played at
+least four games averaged roughly half that mean: PPR mean error of the
+old fallback +7.2 (QB), +3.8 (RB), +2.2 (TE), +4.5 (WR) points per game.
+
+With a usage model supplied, such a player gets the fitted absent-prior
+stat line scored in this league (half-PPR in NWC: QB 7.7, RB 3.8, TE 2.3,
+WR 2.6 points per game). Held out, that cut the error to
++0.1/+0.8/-0.1/+0.3 (PPR) and the MAE by 38-54%, and it does not depend
+on who else is in the pool. Without a usage model the positional mean is
+scaled by :data:`DEFAULT_ABSENT_PRIOR_RATIO` (measured the same way; see
+that constant). Either way every absent-prior player at a position gets
+the same value and so ties (standard competition ranking), and
+``projection_model`` is ``"absent_prior"``.
+
+The unscaled fallback is not just high, it is unstable: it is the mean of
+whoever else is in the frame. On the 2026 week-1 board it was 7.78 RB ppg
+(five retired or unsigned backs tied at waiver rank 20); on the week-4
+NWC universe it is 5.87, which tied 15 no-data backs at rank 43 -- inside
+the top 40 skill rows. With the usage model the first no-data player on
+that board is at rank 153.
+
 A free agent with **no crosswalk match at all**
 --------------------------------------------------------------------------
 
@@ -279,8 +336,9 @@ on ``remaining_games`` in step 1, described above.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Mapping, Optional
 
+import numpy as np
 import pandas as pd
 
 from fantasy_analyzer.players.player_value import (
@@ -288,6 +346,16 @@ from fantasy_analyzer.players.player_value import (
 )
 from fantasy_analyzer.players.ros_backtest import DEFAULT_SEASON_END_WEEK
 from fantasy_analyzer.players.ros_projection import ShrinkageParameters, project_ppg
+from fantasy_analyzer.players.usage_projection import (
+    STAT_LINE_COLUMNS,
+    UsageModelParameters,
+    blend_projections,
+    build_opportunity_quality_features,
+    build_usage_features,
+    has_usage_stat_columns,
+    project_usage,
+    score_stat_line,
+)
 
 #: Season-to-date opportunity summary columns (FFA-098), appended to
 #: :data:`FREE_AGENT_PROJECTION_COLUMNS`.
@@ -357,28 +425,89 @@ _OPPORTUNITY_VOLUME_COLUMNS = {
 #: for a player with no prior season at all.
 DEFAULT_MIN_PRIOR_GAMES = 4
 
+#: Model-explanation columns (FFA-111), appended to
+#: :data:`FREE_AGENT_PROJECTION_COLUMNS`. See the module docstring's
+#: "Which model produced projected_ppg (FFA-111)" section.
+#:
+#: - ``eb_projected_ppg``: the empirical-Bayes points projection alone.
+#: - ``usage_projected_ppg``: the opportunity-first projection alone
+#:   (:mod:`fantasy_analyzer.players.usage_projection`), scored through the
+#:   league's settings. ``NaN`` when it could not run.
+#: - ``projection_model``: which produced ``projected_ppg`` -- ``"blend"``,
+#:   ``"usage"``, ``"eb"``, ``"absent_prior"`` (FFA-104), or ``None`` when
+#:   nothing could be projected.
+#: - ``snap_share`` / ``snap_share_last2``: mean offensive snap share over
+#:   the season to date / the last two games with a snap row.
+#: - ``xfp_per_game``: league-scored expected fantasy points per game
+#:   played (ffopportunity expected stat line, rescored).
+#: - ``points_over_expected_per_game``: ``ppg_to_date - xfp_per_game`` --
+#:   touchdown and efficiency luck to date. Positive means he has scored
+#:   more than his opportunities were worth.
+#: - ``projected_targets_per_game`` / ``projected_carries_per_game`` /
+#:   ``projected_pass_attempts_per_game``: the usage model's volume.
+MODEL_EXPLANATION_COLUMNS = [
+    "eb_projected_ppg",
+    "usage_projected_ppg",
+    "projection_model",
+    "snap_share",
+    "snap_share_last2",
+    "xfp_per_game",
+    "points_over_expected_per_game",
+    "projected_targets_per_game",
+    "projected_carries_per_game",
+    "projected_pass_attempts_per_game",
+]
+
+#: Absent-prior ratio (FFA-104), used only when no usage model is supplied:
+#: a player with **no games to date and no trusted prior** is projected at
+#: this fraction of the positional-mean fallback. With a usage model the
+#: fitted, population-independent absent-prior stat line is used instead.
+#:
+#: Measured, not chosen. Historically (nflverse 2015-2025, cutoffs 2-10),
+#: players in exactly that state who *then played at least four games*
+#: averaged this fraction of the positional mean the old fallback assigned
+#: them (0.51/0.56/0.54/0.41 under PPR and half-PPR alike, to two
+#: decimals). Fitted on earlier seasons only and scored on 2019-2025 it cut
+#: the fallback's PPR mean absolute error from 7.28/4.25/2.95/4.90 to
+#: 4.22/2.61/1.77/2.19 (QB/RB/TE/WR). On the live 2026 week-4 NWC universe
+#: it turns an unscaled fallback of 13.07/5.87/3.99/5.08 half-PPR ppg into
+#: 6.67/3.29/2.15/2.08, against the cohort's historical 7.73/3.58/2.41/2.53
+#: -- slightly conservative. Conditioning on having played makes the
+#: cohort itself an upper bound: a player who never takes the field has no
+#: row to measure. A position absent here (K, DEF) keeps the unscaled mean.
+DEFAULT_ABSENT_PRIOR_RATIO: dict[str, float] = {
+    "QB": 0.51,
+    "RB": 0.56,
+    "TE": 0.54,
+    "WR": 0.41,
+}
+
 #: Column order for the DataFrame returned by
 #: :func:`build_free_agent_ros_projections`.
-FREE_AGENT_PROJECTION_COLUMNS = [
-    "player_id",
-    "full_name",
-    "position",
-    "team",
-    "status",
-    "gsis_id",
-    "has_crosswalk",
-    "games_to_date",
-    "ppg_to_date",
-    "last3_ppg",
-    "prior_season_ppg",
-    "prior_season_games",
-    "prior_resolved_ppg",
-    "blend_weight",
-    "confidence_tier",
-    "projected_ppg",
-    "remaining_games",
-    "projected_ros_points",
-] + OPPORTUNITY_SUMMARY_COLUMNS
+FREE_AGENT_PROJECTION_COLUMNS = (
+    [
+        "player_id",
+        "full_name",
+        "position",
+        "team",
+        "status",
+        "gsis_id",
+        "has_crosswalk",
+        "games_to_date",
+        "ppg_to_date",
+        "last3_ppg",
+        "prior_season_ppg",
+        "prior_season_games",
+        "prior_resolved_ppg",
+        "blend_weight",
+        "confidence_tier",
+        "projected_ppg",
+        "remaining_games",
+        "projected_ros_points",
+    ]
+    + OPPORTUNITY_SUMMARY_COLUMNS
+    + MODEL_EXPLANATION_COLUMNS
+)
 
 #: Column order for the DataFrame returned by :func:`build_waiver_wire_rankings`.
 WAIVER_WIRE_RANKING_COLUMNS = FREE_AGENT_PROJECTION_COLUMNS + [
@@ -398,18 +527,22 @@ CONFIDENCE_TIER_LOW_MAX_GAMES = 2
 #: is ``"high"``.
 CONFIDENCE_TIER_MEDIUM_MAX_GAMES = 7
 
-_FLOAT_PROJECTION_COLUMNS = [
-    "games_to_date",
-    "ppg_to_date",
-    "last3_ppg",
-    "prior_season_ppg",
-    "prior_season_games",
-    "prior_resolved_ppg",
-    "blend_weight",
-    "projected_ppg",
-    "remaining_games",
-    "projected_ros_points",
-] + OPPORTUNITY_SUMMARY_COLUMNS
+_FLOAT_PROJECTION_COLUMNS = (
+    [
+        "games_to_date",
+        "ppg_to_date",
+        "last3_ppg",
+        "prior_season_ppg",
+        "prior_season_games",
+        "prior_resolved_ppg",
+        "blend_weight",
+        "projected_ppg",
+        "remaining_games",
+        "projected_ros_points",
+    ]
+    + OPPORTUNITY_SUMMARY_COLUMNS
+    + [column for column in MODEL_EXPLANATION_COLUMNS if column != "projection_model"]
+)
 
 _FLOAT_RANKING_COLUMNS = _FLOAT_PROJECTION_COLUMNS + [
     "replacement_ppg",
@@ -556,6 +689,9 @@ def build_free_agent_ros_projections(
     prior_season_weeks: Optional[pd.DataFrame] = None,
     season_end_week: int = DEFAULT_SEASON_END_WEEK,
     min_prior_games: int = DEFAULT_MIN_PRIOR_GAMES,
+    usage_parameters: Optional[UsageModelParameters] = None,
+    scoring_settings: Optional[Mapping[str, float]] = None,
+    usage: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """Project rest-of-season points per game for every free agent.
 
@@ -600,11 +736,27 @@ def build_free_agent_ros_projections(
             player with no prior season at all. Defaults to
             :data:`DEFAULT_MIN_PRIOR_GAMES`; pass ``0`` to disable the
             guard and trust every prior regardless of sample size.
+        usage_parameters: A fitted
+            :class:`~fantasy_analyzer.players.usage_projection.UsageModelParameters`
+            (``load_usage_model_parameters()``). With ``scoring_settings``
+            it switches on the opportunity-first projection and the blend
+            (FFA-111). ``None`` keeps the EB projection alone.
+        scoring_settings: The league's Sleeper scoring settings, used to
+            score the usage model's projected stat line and the xFP
+            columns. Required for the usage model; ignored without
+            ``usage_parameters``.
+        usage: Optional ``players.usage.load_usage_player_weeks`` frame
+            (GSIS-keyed snap counts and expected points). Supplies the snap
+            term of the usage model and the ``snap_share*``/``xfp_*``
+            columns. ``None`` uses the separately fitted no-snap model and
+            leaves those columns ``NaN``.
 
     Returns:
         A DataFrame with :data:`FREE_AGENT_PROJECTION_COLUMNS`, one row per
         free agent in ``free_agent_pool``, in the same order. Empty (same
-        columns) if ``free_agent_pool`` is empty.
+        columns) if ``free_agent_pool`` is empty. Extra pool columns (for
+        example ``is_rostered``/``roster_id`` from ``build_player_universe``)
+        are tolerated and not carried through.
 
     Raises:
         ValueError: If ``cutoff_week < 1`` or ``min_prior_games < 0``.
@@ -752,23 +904,55 @@ def build_free_agent_ros_projections(
             observed_frame.groupby("position")["ppg_to_date"].mean().to_dict()
         )
 
+    use_usage_model = (
+        usage_parameters is not None
+        and scoring_settings is not None
+        and has_usage_stat_columns(scored_weeks)
+    )
+    absent_prior_ppg = (
+        _absent_prior_points(usage_parameters, scoring_settings)
+        if usage_parameters is not None and scoring_settings is not None
+        else {}
+    )
+
     # Population B: has a crosswalk but zero games to date (rookie /
     # inactive-to-date). w = 0 exactly, so projected_ppg = resolved prior.
+    # FFA-104: with no *trusted* prior either, nothing about the player is
+    # observed, and the positional mean of players who *are* playing is the
+    # wrong prior for him -- see DEFAULT_ABSENT_PRIOR_RATIO.
     zero_games_mask = (
         frame["has_crosswalk"]
         & (frame["games_to_date"].fillna(0) == 0)
         & frame["games_to_date"].notna()
     )
+    absent_prior_index: list = []
     for index in frame.loc[zero_games_mask].index:
         position = frame.at[index, "position"]
         prior_season_ppg = trusted_prior.at[index]
         if prior_season_ppg is not None and not pd.isna(prior_season_ppg):
             resolved = float(prior_season_ppg)
         else:
-            resolved = positional_mean.get(position)
+            resolved = _absent_prior_value(
+                position, positional_mean.get(position), absent_prior_ppg
+            )
+            absent_prior_index.append(index)
         frame.at[index, "prior_resolved_ppg"] = resolved
         frame.at[index, "blend_weight"] = 0.0
         frame.at[index, "projected_ppg"] = resolved
+
+    frame["projected_ppg"] = pd.to_numeric(frame["projected_ppg"], errors="coerce")
+    frame["eb_projected_ppg"] = frame["projected_ppg"].astype("float64")
+    frame = _apply_usage_model(
+        frame,
+        scored_weeks,
+        season,
+        cutoff_week,
+        prior_season_weeks=prior_season_weeks,
+        usage_parameters=usage_parameters if use_usage_model else None,
+        scoring_settings=scoring_settings,
+        usage=usage,
+        absent_prior_index=absent_prior_index,
+    )
 
     frame["projected_ros_points"] = frame["projected_ppg"] * frame["remaining_games"]
     # Built via an explicit list rather than Series.map: pandas can silently
@@ -796,6 +980,136 @@ def build_free_agent_ros_projections(
     return frame[FREE_AGENT_PROJECTION_COLUMNS]
 
 
+def _absent_prior_points(
+    usage_parameters: UsageModelParameters, scoring_settings: Mapping[str, float]
+) -> dict[str, float]:
+    """The fitted absent-prior stat line, scored in this league, per position."""
+    lines = usage_parameters.absent_prior_stat_line
+    if not lines:
+        return {}
+    frame = pd.DataFrame(
+        [
+            {column: float(line.get(column, 0.0)) for column in STAT_LINE_COLUMNS}
+            for line in lines.values()
+        ],
+        index=list(lines.keys()),
+    )
+    return score_stat_line(frame, scoring_settings).to_dict()
+
+
+def _absent_prior_value(
+    position: Optional[str],
+    positional_mean: Optional[float],
+    absent_prior_ppg: Mapping[str, float],
+) -> Optional[float]:
+    """FFA-104: the projection for a player with no games and no trusted prior.
+
+    The fitted absent-prior line, scored in this league, when a usage model
+    supplied one for the position; otherwise
+    :data:`DEFAULT_ABSENT_PRIOR_RATIO` times the positional mean; otherwise
+    (an unmeasured position such as K) the positional mean, as before.
+    """
+    if position in absent_prior_ppg and pd.notna(absent_prior_ppg[position]):
+        return float(absent_prior_ppg[position])
+    if positional_mean is None or pd.isna(positional_mean):
+        return None
+    return float(positional_mean) * DEFAULT_ABSENT_PRIOR_RATIO.get(position, 1.0)
+
+
+def _apply_usage_model(
+    frame: pd.DataFrame,
+    scored_weeks: pd.DataFrame,
+    season: int,
+    cutoff_week: int,
+    *,
+    prior_season_weeks: Optional[pd.DataFrame],
+    usage_parameters: Optional[UsageModelParameters],
+    scoring_settings: Optional[Mapping[str, float]],
+    usage: Optional[pd.DataFrame],
+    absent_prior_index: list,
+) -> pd.DataFrame:
+    """Fill the FFA-111 explanation columns and the final ``projected_ppg``.
+
+    ``frame["projected_ppg"]`` arrives as the EB projection (already copied
+    to ``eb_projected_ppg``). With a usage model it becomes the per-position
+    blend of the two; without one it is left as EB. Rows are joined on
+    ``gsis_id``, the key ``scored_weeks`` and ``usage`` share.
+    """
+    for column in MODEL_EXPLANATION_COLUMNS:
+        if column not in ("eb_projected_ppg",):
+            frame[column] = np.nan
+    frame["projection_model"] = pd.Series(
+        ["eb" if pd.notna(value) else None for value in frame["projected_ppg"]],
+        index=frame.index,
+        dtype=object,
+    )
+
+    quality = pd.DataFrame()
+    if usage is not None and scoring_settings is not None and not usage.empty:
+        quality = build_opportunity_quality_features(
+            usage, season, cutoff_week, scoring_settings
+        )
+    if not quality.empty:
+        gsis = frame["gsis_id"]
+        frame["snap_share"] = gsis.map(quality["snap_share"])
+        frame["snap_share_last2"] = gsis.map(quality["snap_share_last2"])
+        xfp_total = gsis.map(quality["xfp_to_date"].fillna(0.0)).where(
+            gsis.isin(quality.index)
+        )
+        games = frame["games_to_date"]
+        frame["xfp_per_game"] = (xfp_total / games).where(games > 0)
+        frame["points_over_expected_per_game"] = (
+            frame["ppg_to_date"] - frame["xfp_per_game"]
+        )
+
+    if usage_parameters is not None and scoring_settings is not None:
+        features = build_usage_features(
+            scored_weeks,
+            season,
+            cutoff_week,
+            prior_season_weeks=prior_season_weeks,
+        )
+        has_snap_data = not quality.empty and quality["snap_share_last2"].notna().any()
+        if has_snap_data:
+            features = features.join(quality, how="left")
+        chosen = usage_parameters.for_snap_data(has_snap_data)
+        projected = project_usage(features, chosen, scoring_settings)
+
+        gsis = frame["gsis_id"]
+        usable = frame["has_crosswalk"].astype(bool) & gsis.isin(projected.index)
+        lookup = projected.loc[
+            :,
+            [
+                "usage_projected_ppg",
+                "projected_targets_per_game",
+                "projected_carries_per_game",
+                "projected_attempts_per_game",
+            ],
+        ]
+        for source, target in (
+            ("usage_projected_ppg", "usage_projected_ppg"),
+            ("projected_targets_per_game", "projected_targets_per_game"),
+            ("projected_carries_per_game", "projected_carries_per_game"),
+            ("projected_attempts_per_game", "projected_pass_attempts_per_game"),
+        ):
+            frame[target] = gsis.map(lookup[source]).where(usable)
+
+        final, model = blend_projections(
+            frame["position"],
+            frame["eb_projected_ppg"],
+            frame["usage_projected_ppg"].astype("float64"),
+            chosen,
+        )
+        frame["projected_ppg"] = final
+        frame["projection_model"] = model
+
+    for index in absent_prior_index:
+        frame.at[index, "projected_ppg"] = frame.at[index, "eb_projected_ppg"]
+        if pd.notna(frame.at[index, "projected_ppg"]):
+            frame.at[index, "projection_model"] = "absent_prior"
+    return frame
+
+
 def build_waiver_wire_rankings(
     free_agent_pool: pd.DataFrame,
     scored_weeks: pd.DataFrame,
@@ -809,6 +1123,9 @@ def build_waiver_wire_rankings(
     season_end_week: int = DEFAULT_SEASON_END_WEEK,
     min_prior_games: int = DEFAULT_MIN_PRIOR_GAMES,
     replacement_population: Optional[pd.DataFrame] = None,
+    usage_parameters: Optional[UsageModelParameters] = None,
+    scoring_settings: Optional[Mapping[str, float]] = None,
+    usage: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """Rank a league's free agents by rest-of-season points above replacement.
 
@@ -843,6 +1160,9 @@ def build_waiver_wire_rankings(
             docstring's "Whom the replacement level is measured over"
             section for the measured distortion it removes. Only
             ``free_agent_pool``'s players are ever returned.
+        usage_parameters: As for :func:`build_free_agent_ros_projections`.
+        scoring_settings: As for :func:`build_free_agent_ros_projections`.
+        usage: As for :func:`build_free_agent_ros_projections`.
 
     Returns:
         A DataFrame with :data:`WAIVER_WIRE_RANKING_COLUMNS`, one row per
@@ -880,6 +1200,9 @@ def build_waiver_wire_rankings(
         prior_season_weeks=prior_season_weeks,
         season_end_week=season_end_week,
         min_prior_games=min_prior_games,
+        usage_parameters=usage_parameters,
+        scoring_settings=scoring_settings,
+        usage=usage,
     )
 
     # Only players with a real projection can enter the VORP computation --

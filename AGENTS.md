@@ -359,6 +359,17 @@ workflow and the published URL.
 - **FFA-106** — Dashboard Page — DONE — `scripts/dashboard_artifact.py` plus
   `scripts/templates/dashboard.html.tpl`, following the `{{DATA}}` pattern
   `draft_board_artifact.py` established.
+- **FFA-111** — Opportunity-First ROS Projection — DONE —
+  `players/usage_projection.py`, fitted by `scripts/fit_usage_model.py`.
+  `projected_ppg` for QB/RB/WR/TE is a per-position blend of a usage model
+  and the EB projection. It beat EB at every position in a rolling-origin
+  backtest (`docs/valuation-model.md`). Wired into the dashboard's board and
+  lineup and into the `free-agents` CLI.
+- **FFA-104** — Absent-Prior Projection — DONE — a player with no games and
+  fewer than 4 prior-season games gets a fitted absent-prior line (or
+  `DEFAULT_ABSENT_PRIOR_RATIO` × the positional mean without a usage model),
+  not the positional mean. `WAIVER_QUALITY_FILTER` and `RAW_WAIVER_DEPTH`
+  were removed from `build_dashboard.py`.
 
 ## READY — found while building the dashboard, measured, not yet fixed
 
@@ -366,12 +377,7 @@ workflow and the published URL.
   Sleeper marks unsigned NFL free agents `status: "Active"` with
   `team: None`, and `DEFAULT_EXCLUDED_STATUSES` covers only
   `{inactive, retired}`. A `team.notna()` guard in `build_free_agent_pool`
-  fixes it. Currently worked around by `build_dashboard.py`'s
-  `WAIVER_QUALITY_FILTER`.
-- **FFA-104** — Guard an *absent* prior, not just a thin one.
-  `min_prior_games` (FFA-096) guards a thin prior season but not a missing
-  one, so a player with zero data resolves to the positional mean, which
-  sits above replacement. Same workaround, same place.
+  fixes it.
 - **FFA-107** — Injury awareness in `roster_fit`.
   `optimal_lineup`/`build_add_drop_candidates` are projection-only and will
   start a player who is Out or on a bye — measured on a real roster, where
@@ -414,13 +420,11 @@ Known follow-ups, none blocking:
 ## READY
 
 - **FFA-103** — Exclude teamless players from the free-agent pool.
-- **FFA-104** — Guard an absent prior season, not just a thin one.
 - **FFA-107** — Injury/bye awareness in `roster_fit`.
 - **FFA-108** — `_completed_weeks` calls a week complete before its Monday
   night game; published two wrong winners on 2026-09-21.
 
-All four are measured, have a documented workaround in
-`scripts/build_dashboard.py`, and are described under Epic 10 above.
+All three are measured and described under Epic 10 above.
 
 ---
 

@@ -8,11 +8,13 @@ the suite -- no live Sleeper dependency, per AGENTS.md.
 import json
 
 import pandas as pd
+import pytest
 import requests_mock as requests_mock_lib
 
 from fantasy_analyzer.cli import (
     DEFAULT_EFFORT,
     DEFAULT_MODEL,
+    _load_usage_inputs,
     build_arg_parser,
     main,
     run_commentary_matchups,
@@ -22,6 +24,7 @@ from fantasy_analyzer.cli import (
     run_summary,
 )
 from fantasy_analyzer.players.provider import PLAYER_WEEK_IDENTITY_COLUMNS
+from fantasy_analyzer.players.waiver_rankings import WAIVER_WIRE_RANKING_COLUMNS
 from fantasy_analyzer.sleeper.client import SleeperClient
 
 
@@ -707,6 +710,91 @@ def _patch_get_players_cached(monkeypatch) -> None:
     monkeypatch.setattr(
         "fantasy_analyzer.cli.get_players_cached", lambda client: client.get_players()
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_usage_caches(monkeypatch) -> None:
+    """Keep ``build_free_agent_rankings`` off the real on-disk usage caches.
+
+    ``_load_usage_inputs`` reads the fitted usage model and the snap/xFP
+    caches under ``.cache/``; whatever happens to exist in the working
+    directory must not change a test's ranking, the same reason
+    :func:`_patch_get_players_cached` exists. The EB-only path is the default
+    here; tests of the usage wiring opt in with their own stand-ins.
+    """
+    monkeypatch.setattr(
+        "fantasy_analyzer.cli._load_usage_inputs", lambda season: (None, None)
+    )
+
+
+def test_free_agents_pass_the_usage_model_to_the_ranking(
+    load_sleeper_fixture, monkeypatch
+) -> None:
+    """FFA-111: the usage model, the league's scoring and the snap frame all
+    reach ``build_waiver_wire_rankings``."""
+    _patch_get_players_cached(monkeypatch)
+    usage_parameters, usage = object(), pd.DataFrame({"season": [2025]})
+    seasons: list[int] = []
+    captured: dict = {}
+
+    def fake_load(season):
+        seasons.append(season)
+        return usage_parameters, usage
+
+    def fake_rankings(*args, **kwargs):
+        captured.update(kwargs)
+        return pd.DataFrame(columns=WAIVER_WIRE_RANKING_COLUMNS)
+
+    monkeypatch.setattr("fantasy_analyzer.cli._load_usage_inputs", fake_load)
+    monkeypatch.setattr(
+        "fantasy_analyzer.cli.build_waiver_wire_rankings", fake_rankings
+    )
+    with requests_mock_lib.Mocker() as m:
+        _mock_free_agent_endpoints(m, load_sleeper_fixture)
+        run_free_agents(
+            SleeperClient(),
+            "111",
+            season=2025,
+            week=3,
+            provider=FakeWeeklyStatsProvider([]),
+        )
+
+    assert seasons == [2025]
+    assert captured["usage_parameters"] is usage_parameters
+    assert captured["usage"] is usage
+    league = load_sleeper_fixture("league.json")
+    assert captured["scoring_settings"] == league["scoring_settings"]
+
+
+def test_load_usage_inputs_falls_back_one_layer_at_a_time(monkeypatch) -> None:
+    """No parameters -> EB alone; parameters but no snap cache -> no-snap model."""
+    parameters = object()
+    frame = pd.DataFrame({"season": [2025, 2026]})
+    requested: list = []
+
+    def load_frame(seasons):
+        requested.append(list(seasons))
+        return frame
+
+    def missing_cache(seasons):
+        raise FileNotFoundError("snap_counts_2026.csv")
+
+    monkeypatch.setattr(
+        "fantasy_analyzer.cli.load_usage_model_parameters", lambda: None
+    )
+    monkeypatch.setattr("fantasy_analyzer.cli.load_usage_player_weeks", load_frame)
+    assert _load_usage_inputs(2026) == (None, None)
+    assert requested == []
+
+    monkeypatch.setattr(
+        "fantasy_analyzer.cli.load_usage_model_parameters", lambda: parameters
+    )
+    loaded_parameters, loaded_frame = _load_usage_inputs(2026)
+    assert loaded_parameters is parameters and loaded_frame is frame
+    assert requested == [[2025, 2026]]
+
+    monkeypatch.setattr("fantasy_analyzer.cli.load_usage_player_weeks", missing_cache)
+    assert _load_usage_inputs(2026) == (parameters, None)
 
 
 def test_run_free_agents_no_crosswalk_free_agent_returns_row_with_null_projection(

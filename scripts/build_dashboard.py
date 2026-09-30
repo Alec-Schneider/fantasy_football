@@ -29,14 +29,45 @@ serialize. Specifically it reuses:
 - ``league_week_recap_prompt`` (FFA-092) over ``build_league_week_context``
   (FFA-091), now supplied with genuinely historical ``standings_df`` and
   ``previous_standings_df`` thanks to FFA-102.
-- The FFA-095..101 waiver pipeline, mirroring the three composition choices
+- The FFA-095..101 waiver pipeline, mirroring the four composition choices
   ``cli.build_free_agent_rankings`` documents as carrying most of the
   board's accuracy (robust crosswalk, league-wide replacement population,
-  fitted shrinkage parameters). This script inlines that composition rather
-  than calling ``build_free_agent_rankings`` for one reason: it needs the
-  intermediate ``scored_weeks`` frame for defense-vs-position and for the
-  roster projections, and that function does not return it. The three
-  choices are reproduced exactly -- see ``_build_waiver_board``.
+  fitted shrinkage parameters, the FFA-111 usage model). This script inlines
+  that composition rather than calling ``build_free_agent_rankings`` for one
+  reason: it needs the intermediate ``scored_weeks`` frame for
+  defense-vs-position and for the roster projections, and that function
+  does not return it. The four choices are reproduced exactly -- see
+  ``_build_waiver_board``. The
+  crosswalk is additionally extended with verified name matches
+  (``extend_crosswalk_with_name_matches``) once the season's stats are
+  loaded, which recovers players the ID sources miss.
+
+The player universe and the two projection models
+--------------------------------------------------
+
+Everything is valued over one population: ``build_player_universe``
+(FFA-109) -- every rostered player whatever his status (so an Inactive
+player in an IR slot is still on his manager's roster) plus every free
+agent the package's pool rules admit. That universe is the replacement
+population, the set the projections are built for, and the set the
+full-universe valuation CSV covers.
+
+Two models project it, and each position is projected by exactly one:
+
+- ``QB``/``RB``/``WR``/``TE`` -- the waiver pipeline's skill-player model:
+  the per-position blend of the opportunity-first usage model and the EB
+  projection (FFA-111), with the fitted absent-prior line for a player with
+  no games and no trusted prior (FFA-104). See "The skill-player model"
+  below and ``docs/valuation-model.md``.
+- ``K``/``DEF`` -- ``build_kicker_defense_projections`` (FFA-112), never the
+  skill model. Its rest-of-season ``projected_ppg`` feeds the waiver board,
+  the VORP and the moves; its market-adjusted ``week_projected_points``
+  feeds the coming week's lineup call.
+
+VORP for every position comes from the same
+``player_value.build_player_value_metrics`` the skill board uses, over the
+whole universe, so a kicker's replacement level is the league's last
+starting kicker (one per team) and cross-position ranks share one basis.
 
 Commentary
 -----------
@@ -49,25 +80,65 @@ into the bundle and, if a hand- or Claude-written recap exists at
 commentary. The refresh workflow is "ask Claude in a session", so the
 session that runs this script is also the thing that writes those files.
 
-Known upstream defects this script filters around
---------------------------------------------------
+The skill-player model
+----------------------
 
-Two measured free-agent defects are documented but not yet fixed in
-``src/`` (they are tracked as FFA-103/FFA-104 in AGENTS.md):
+The board and the universe projections (which the lineup call and the
+valuation read) are built with the same three inputs, so a free agent's
+projection on the board equals his row in the valuation:
 
-1. *Teamless players rank.* Sleeper marks unsigned NFL free agents
-   ``status: "Active"`` with ``team: None``, and ``DEFAULT_EXCLUDED_STATUSES``
-   covers only ``{inactive, retired}``. Half a raw top-50 board can be
-   players not on an NFL roster at all.
-2. *No-prior players inherit the positional mean.* ``min_prior_games``
-   guards a *thin* prior but not an *absent* one, so a player with zero data
-   resolves to the positional mean, which sits above replacement -- giving a
-   cluster of long-retired names an identical projection and a shared rank.
+- ``usage_parameters`` -- the fitted usage model
+  (``load_usage_model_parameters``, ``.cache/nflverse``), refit by
+  ``scripts/fit_usage_model.py``;
+- ``scoring_settings`` -- the league's own, so the projected stat line and
+  the absent-prior line are scored the way the league scores;
+- ``usage`` -- snap counts and expected points for the season and the one
+  before (``load_usage_player_weeks``).
 
-:data:`WAIVER_QUALITY_FILTER` applies the documented workaround (require an
-NFL team, and require either real prior-season volume or snaps this season).
-It is a display filter in one place, not a fix; remove it once those tickets
-land.
+A missing parameter file falls back to the EB projection alone, and a
+missing snap/xFP cache to the separately fitted no-snap usage model; the
+build prints which it used. Neither is silent, because both measurably
+lose accuracy.
+
+No display filter sits on top. The skill board used to drop players with
+fewer than 4 prior-season games and no games this season, because FFA-104's
+old fallback gave such a player the positional mean. The absent-prior line
+replaces that fallback: on the week-4 boards (2026-09-30) the best-ranked
+player that filter would have removed is 136th of 577 skill free agents in
+NWC (180th once K/DEF are merged), 167th in New Wave and 140th in Zipline --
+far below the 40 rows the page shows. (FFA-103, teamless free agents, is
+fixed in the package: the free-agent half of the universe requires an NFL
+team.)
+
+Full-universe valuation
+-----------------------
+
+Besides the bundle, each league gets ``<out>/valuations/<slug>_week<N>.csv``
+(``N`` = the week about to be played): every universe player with his
+projection, VORP, overall and positional rank, rostered state, owner,
+injury and bye. It is the complete "who is worth what" table the page only
+samples, and is not rendered on the page.
+
+When is a week final? (FFA-108)
+--------------------------------
+
+A week is published as complete only when *both* Sleeper and the NFL agree
+it is over: every contested fantasy pairing has non-zero points on both
+sides, **and** every NFL game scheduled that week has a final score in the
+nflverse schedule cache (``completed_nfl_weeks``). The first test alone let
+a week missing only its Monday night game through on 2026-09-21 -- every
+fantasy team already had *some* points -- and published two wrong winners.
+
+Availability (FFA-107)
+-----------------------
+
+Who can play, and for how long, is the package's
+:mod:`fantasy_analyzer.players.availability` rule, not a local filter. The
+lineup call is solved for the coming week with Out/IR/bye players excluded;
+the add/drop search is scored over the rest of the fantasy regular season
+with each player's per-week availability, so a player who is merely Out or
+on bye *this* week is never offered as a free drop. IR-slot (``reserve``)
+players are never proposed as drops -- they hold no bench spot.
 """
 
 from __future__ import annotations
@@ -77,9 +148,10 @@ import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 import pandas as pd
+from draft_league_presets import LEAGUES
 
 from fantasy_analyzer.analytics.league_analytics import build_league_analytics
 from fantasy_analyzer.analytics.power_rankings import build_power_rankings
@@ -92,8 +164,26 @@ from fantasy_analyzer.matchups.loader import load_season_matchups
 from fantasy_analyzer.matchups.outcomes import derive_season_outcomes
 from fantasy_analyzer.matchups.pairing import pair_season_matchups
 from fantasy_analyzer.matchups.season_matchups import build_season_matchup_df
-from fantasy_analyzer.players.crosswalk import build_robust_id_crosswalk
-from fantasy_analyzer.players.free_agents import build_free_agent_pool
+from fantasy_analyzer.players.availability import (
+    LONG_TERM_INJURY_STATUSES,
+    add_availability,
+    normalize_injury_status,
+)
+from fantasy_analyzer.players.crosswalk import (
+    build_robust_id_crosswalk,
+    extend_crosswalk_with_name_matches,
+)
+from fantasy_analyzer.players.free_agents import (
+    FREE_AGENT_POOL_COLUMNS,
+    build_player_universe,
+)
+from fantasy_analyzer.players.kicker_defense import (
+    KICKER_DEFENSE_POSITIONS,
+    build_kicker_defense_projections,
+)
+from fantasy_analyzer.players.lineup_efficiency import START_SLOT_ELIGIBILITY
+from fantasy_analyzer.players.nflverse_cache import get_player_stats_cached
+from fantasy_analyzer.players.nflverse_client import NflverseClient
 from fantasy_analyzer.players.nflverse_provider import NflverseWeeklyStatsProvider
 from fantasy_analyzer.players.nflverse_schedule_cache import get_games_cached
 from fantasy_analyzer.players.nflverse_schedule_client import NflverseScheduleClient
@@ -101,9 +191,11 @@ from fantasy_analyzer.players.opponent_strength import (
     add_matchup_context,
     build_defense_vs_position,
     bye_weeks,
+    completed_nfl_weeks,
     normalize_schedule,
     normalize_team,
 )
+from fantasy_analyzer.players.player_value import build_player_value_metrics
 from fantasy_analyzer.players.ros_backtest import build_scored_player_weeks
 from fantasy_analyzer.players.ros_projection import (
     DEFAULT_N0,
@@ -111,10 +203,18 @@ from fantasy_analyzer.players.ros_projection import (
     load_shrinkage_parameters,
 )
 from fantasy_analyzer.players.roster_fit import (
+    POSITION_ALIASES,
+    assign_lineup_slots,
     build_add_drop_candidates,
     build_roster_projection_frame,
+    open_roster_spots,
     optimal_lineup,
     starting_slots,
+)
+from fantasy_analyzer.players.usage import load_usage_player_weeks
+from fantasy_analyzer.players.usage_projection import (
+    UsageModelParameters,
+    load_usage_model_parameters,
 )
 from fantasy_analyzer.players.waiver_rankings import (
     build_free_agent_ros_projections,
@@ -122,8 +222,6 @@ from fantasy_analyzer.players.waiver_rankings import (
 )
 from fantasy_analyzer.sleeper.cache import get_players_cached
 from fantasy_analyzer.sleeper.client import SleeperClient
-
-from draft_league_presets import LEAGUES
 
 #: Default season this dashboard covers.
 DEFAULT_SEASON = 2026
@@ -139,34 +237,95 @@ NFL_SEASON_WEEKS = range(1, 19)
 #: Sleeper username whose team is highlighted as "my team".
 DEFAULT_USERNAME = "schneidbaby"
 
-#: Positions with no nflverse player-week rows at all, so no projection can
-#: exist for them. ``optimal_lineup`` would silently treat such a slot as
-#: empty, so both the lineup recommendation and the add/drop search exclude
-#: them rather than pretend to rank them.
+#: Positions nflverse's player-week rows do not cover, so a projection for
+#: them exists only if a dedicated source supplies one. A slot for such a
+#: position is dropped from the solve only while *no* row at that position
+#: carries a projection (:func:`unprojectable_positions`) -- ``optimal_lineup``
+#: would otherwise read the slot as empty and understate the lineup total.
+#: Once K/DEF projections are in the projection frame, their slots return
+#: automatically.
 UNPROJECTABLE_POSITIONS = frozenset({"K", "DEF", "DST"})
 
-#: Sleeper ``injury_status`` values meaning the player cannot be counted on to
-#: play the coming week. ``build_add_drop_candidates``/``optimal_lineup``
-#: (FFA-100) are projection-only and have no injury awareness -- that module's
-#: own known-limitations note names ``bye_week`` as the column to
-#: cross-reference and stops there -- so an unfiltered "optimal" lineup will
-#: happily start a player who is Out. Measured on a real roster: Alec Pierce
-#: (Out) and Rico Dowdle (Out) both placed in the recommended starting eleven.
-#:
-#: ``Questionable`` is deliberately absent: a questionable player usually
-#: plays, so they stay startable and are merely flagged on the page.
-UNAVAILABLE_INJURY_STATUSES = frozenset(
-    {"Out", "IR", "PUP", "NA", "Doubtful", "Suspended", "DNR", "COV"}
-)
+#: The usage-model explanation columns (``waiver_rankings``), shown as the
+#: "why" behind a projection on the board and the lineup. Absent columns are
+#: skipped by :func:`_records`, so the page degrades to fewer fields.
+USAGE_EXPLANATION_COLUMNS = [
+    "eb_projected_ppg",
+    "usage_projected_ppg",
+    "projection_model",
+    "snap_share",
+    "snap_share_last2",
+    "xfp_per_game",
+    "points_over_expected_per_game",
+    "projected_targets_per_game",
+    "projected_carries_per_game",
+    "projected_pass_attempts_per_game",
+]
+
+#: Board context carried onto each add/drop move, so the page can flag a
+#: candidate's injury and bye without a second lookup.
+MOVE_CONTEXT_COLUMNS = ["board_rank", "injury_status", "bye_week"]
+
+#: Positions projected by ``build_kicker_defense_projections`` and never by
+#: the skill-player model. See the module docstring.
+KDEF_POSITIONS = frozenset(KICKER_DEFENSE_POSITIONS)
+
+#: The per-player column the coming week's lineup is solved on:
+#: ``week_projected_points`` for K/DEF (market-adjusted, 0.0 on a bye),
+#: ``projected_ppg`` for everyone else. The moves use ``projected_ppg``.
+LINEUP_PPG_COLUMN = "lineup_ppg"
+
+#: K and DEF free agents added to the move shortlist per position, on top of
+#: the ``ADD_DROP_CANDIDATES`` skill players. A shortlist ranked on raw
+#: ``projected_ppg`` alone would let a kicker crowd out a receiver, or the
+#: reverse; a K/DEF move is scored as a swap for the rostered one
+#: (``same_position_drop``), so a few suffice.
+KDEF_MOVE_CANDIDATES = 3
+
+#: K and DEF rows kept in the bundle's board beyond the top
+#: ``--top-free-agents`` overall, so the page's K/DEF filter always has the
+#: best few to show even though none rank near the top of the whole board.
+KDEF_BOARD_ROWS = 5
+
+#: Column order of the per-league valuation CSV (missing columns skipped).
+VALUATION_COLUMNS = [
+    "overall_rank",
+    "position_rank",
+    "player_id",
+    "full_name",
+    "position",
+    "team",
+    "status",
+    "is_rostered",
+    "roster_id",
+    "owner",
+    "owner_team_name",
+    "injury_status",
+    "injury_body_part",
+    "bye_week",
+    "projection_source",
+    "projected_ppg",
+    "week_projected_points",
+    "replacement_ppg",
+    "ppg_above_replacement",
+    "points_above_replacement",
+    "remaining_games",
+    "projected_ros_points",
+    "games_to_date",
+    "ppg_to_date",
+    "last3_ppg",
+    "prior_season_ppg",
+    "prior_season_games",
+    "confidence_tier",
+    "has_crosswalk",
+    "targets_per_game",
+    "carries_per_game",
+    "target_share",
+    *USAGE_EXPLANATION_COLUMNS,
+]
 
 #: How many ranked free agents to keep in the bundle per league.
 DEFAULT_TOP_FREE_AGENTS = 40
-
-#: How deep to rank before applying :data:`WAIVER_QUALITY_FILTER`. The filter
-#: removes a large fraction of the raw board (measured: 31 of a raw top 50 in
-#: one league), so the pre-filter cut has to be far deeper than the number of
-#: rows actually wanted.
-RAW_WAIVER_DEPTH = 600
 
 #: Free agents to feed the add/drop search. ``build_add_drop_candidates``
 #: solves one lineup per candidate, so this stays a shortlist by design.
@@ -215,32 +374,6 @@ def _records(frame: pd.DataFrame, columns: Optional[list[str]] = None) -> list[d
     return json.loads(frame.to_json(orient="records"))
 
 
-def WAIVER_QUALITY_FILTER(board: pd.DataFrame) -> pd.DataFrame:
-    """Drop rows the two open free-agent defects would otherwise float to the top.
-
-    Requires an NFL team (defect 1: unsigned players carry ``team: None`` and
-    are not excluded by status), and requires either real prior-season volume
-    or snaps already this season (defect 2: a player with no data at all
-    inherits the positional mean, which sits above replacement). Kickers and
-    defenses are dropped too -- nflverse publishes no player-week rows for
-    them, so they have no projection to rank on.
-
-    See the module docstring for the ticket references. This is a display
-    filter, deliberately in one place, not a fix.
-    """
-    if board.empty:
-        return board
-
-    has_team = board["team"].notna() & (board["team"].astype(str).str.len() > 0)
-    prior = pd.to_numeric(board.get("prior_season_games"), errors="coerce").fillna(0)
-    current = pd.to_numeric(board.get("games_to_date"), errors="coerce").fillna(0)
-    projectable = ~board["position"].isin(UNPROJECTABLE_POSITIONS)
-
-    return board[has_team & projectable & ((prior >= 4) | (current > 0))].reset_index(
-        drop=True
-    )
-
-
 def _add_injury_status(frame: pd.DataFrame, catalog: dict) -> pd.DataFrame:
     """Attach Sleeper's ``injury_status``/``injury_body_part`` to a player frame.
 
@@ -255,7 +388,9 @@ def _add_injury_status(frame: pd.DataFrame, catalog: dict) -> pd.DataFrame:
 
     result = frame.copy()
     result["injury_status"] = [
-        (catalog.get(str(player_id)) or {}).get("injury_status")
+        normalize_injury_status(
+            (catalog.get(str(player_id)) or {}).get("injury_status")
+        )
         for player_id in result["player_id"]
     ]
     result["injury_body_part"] = [
@@ -317,19 +452,34 @@ def _upcoming_matchup(
     }
 
 
-def _completed_weeks(season_matchup_df: pd.DataFrame) -> list[int]:
-    """Return weeks whose every contested matchup has real scores on both sides.
+def _completed_weeks(
+    season_matchup_df: pd.DataFrame, nfl_completed_weeks: Iterable[int]
+) -> list[int]:
+    """Return the fantasy weeks that are final on Sleeper *and* in the NFL.
 
-    Sleeper returns a full slate of rows for a future week with every
-    ``points`` at ``0.0``, so presence of a row is not evidence a week was
-    played. A week counts as complete only when no contested pairing in it
-    is still sitting at zero.
+    Two conditions, both required (FFA-108):
+
+    1. Every contested matchup has non-null, non-zero points on both sides.
+       Sleeper returns a full slate of rows for a future week with every
+       ``points`` at ``0.0``, so presence of a row is not evidence a week
+       was played.
+    2. The week is in ``nfl_completed_weeks`` -- every NFL game scheduled
+       that week has a final score
+       (:func:`~fantasy_analyzer.players.opponent_strength.completed_nfl_weeks`).
+       Condition 1 alone passes a week still waiting on Monday night,
+       because every fantasy team already has *some* points by then.
+
+    Fantasy week ``N`` is taken to be NFL week ``N``, which holds for every
+    league this dashboard covers (all start in NFL week 1).
     """
     if season_matchup_df.empty:
         return []
 
+    nfl_done = {int(week) for week in nfl_completed_weeks}
     complete: list[int] = []
     for week, group in season_matchup_df.groupby("week"):
+        if int(week) not in nfl_done:
+            continue
         contested = group[group["roster_2_id"].notna()]
         if contested.empty:
             continue
@@ -337,6 +487,28 @@ def _completed_weeks(season_matchup_df: pd.DataFrame) -> list[int]:
         if points.notna().all() and points.gt(0).all():
             complete.append(int(week))
     return sorted(complete)
+
+
+def unprojectable_positions(projections: pd.DataFrame) -> frozenset[str]:
+    """The :data:`UNPROJECTABLE_POSITIONS` with no projected row in ``projections``.
+
+    Only these are stripped from the lineup solve and the add/drop search.
+    ``DST`` is read as ``DEF`` (``roster_fit.POSITION_ALIASES``), so a
+    projection under either spelling brings the ``DEF`` slot back.
+    """
+    if projections.empty or "projected_ppg" not in projections.columns:
+        return UNPROJECTABLE_POSITIONS
+    projected = {
+        POSITION_ALIASES.get(str(position), str(position))
+        for position in projections.loc[
+            projections["projected_ppg"].notna(), "position"
+        ]
+    }
+    return frozenset(
+        position
+        for position in UNPROJECTABLE_POSITIONS
+        if POSITION_ALIASES.get(position, position) not in projected
+    )
 
 
 def _league_frames(client: SleeperClient, league_id: str, total_weeks: int):
@@ -428,39 +600,268 @@ def _week_payload(
     }
 
 
+def _projection_universe(
+    skill_projections: pd.DataFrame,
+    kdef_projections: pd.DataFrame,
+    universe: pd.DataFrame,
+) -> pd.DataFrame:
+    """One projection row per universe player, each from exactly one model.
+
+    ``QB``/``RB``/``WR``/``TE`` rows come from the skill model; ``K``/``DEF``
+    rows come only from ``build_kicker_defense_projections`` -- any K/DEF
+    row the skill model produced is discarded. ``kdef_projections`` covers
+    the whole catalog, so it is cut to the universe's ids. Adds
+    ``projection_source``, :data:`LINEUP_PPG_COLUMN`, and the universe's
+    ``is_rostered``/``roster_id``, which the projection frames do not carry.
+
+    A universe K/DEF with no row in ``kdef_projections`` (a rostered id the
+    catalog does not know) simply has no projection row, the same outcome
+    as a skill player the projection could not resolve.
+    """
+    ids = set(universe["player_id"].astype(str))
+
+    skill = skill_projections[
+        ~skill_projections["position"].isin(KDEF_POSITIONS)
+    ].assign(projection_source="skill")
+    skill[LINEUP_PPG_COLUMN] = skill["projected_ppg"]
+
+    kdef = kdef_projections
+    if not kdef.empty:
+        kdef = kdef[kdef["player_id"].astype(str).isin(ids)].assign(
+            projection_source="kicker_defense"
+        )
+        kdef[LINEUP_PPG_COLUMN] = kdef["week_projected_points"]
+
+    frames = [frame for frame in (skill, kdef) if not frame.empty]
+    if not frames:
+        return skill.assign(is_rostered=pd.Series(dtype=bool), roster_id=None)
+    combined = pd.concat(frames, ignore_index=True)
+    combined["player_id"] = combined["player_id"].astype(str)
+
+    state = universe[["player_id", "is_rostered", "roster_id"]].assign(
+        player_id=universe["player_id"].astype(str)
+    )
+    combined = combined.merge(state, on="player_id", how="left")
+    combined["is_rostered"] = combined["is_rostered"].fillna(False).astype(bool)
+    return combined
+
+
+def _value_players(
+    projections: pd.DataFrame,
+    season: int,
+    roster_positions: list[str],
+    num_teams: int,
+) -> pd.DataFrame:
+    """Replacement level, VORP and ranks for every projected universe player.
+
+    Shapes ``projections`` exactly as
+    ``waiver_rankings.build_waiver_wire_rankings`` does (remaining games,
+    per-game rate, rest-of-season total) and hands it to the same
+    ``player_value.build_player_value_metrics`` (FFA-068). Over the whole
+    universe that puts each position's replacement at the league's last
+    starter there -- ``1 x num_teams`` for ``K`` and ``DEF`` -- and a
+    free agent's VORP here equals the one on the skill board.
+
+    Adds ``replacement_ppg``, ``ppg_above_replacement``,
+    ``points_above_replacement``, ``overall_rank`` and ``position_rank``.
+    Ranks are standard competition ranks ("1224") on descending
+    ``points_above_replacement`` judged at six decimals -- the rule
+    ``waiver_rank`` uses -- so tied values share a rank. A player with no
+    projection has ``NaN`` in all five.
+    """
+    result = projections.copy()
+    for column in (
+        "replacement_ppg",
+        "ppg_above_replacement",
+        "points_above_replacement",
+    ):
+        result[column] = float("nan")
+    if result.empty:
+        result["overall_rank"] = pd.Series(dtype="float64")
+        result["position_rank"] = pd.Series(dtype="float64")
+        return result
+
+    performance_df = pd.DataFrame(
+        {
+            "season": season,
+            "sleeper_player_id": result["player_id"].astype(str),
+            "player_name": result["full_name"],
+            "position": result["position"],
+            "nfl_team": result["team"],
+            "games_played": result["remaining_games"],
+            "points_per_game": result["projected_ppg"],
+            "total_points": result["projected_ros_points"],
+        }
+    )
+    valid = (
+        performance_df["points_per_game"].notna()
+        & performance_df["total_points"].notna()
+    )
+    value_df = build_player_value_metrics(
+        performance_df.loc[valid], roster_positions, num_teams
+    )
+    if not value_df.empty:
+        lookup = value_df.set_index("sleeper_player_id")
+        for column in (
+            "replacement_ppg",
+            "ppg_above_replacement",
+            "points_above_replacement",
+        ):
+            result[column] = (
+                result["player_id"].astype(str).map(lookup[column]).astype("float64")
+            )
+
+    key = result["points_above_replacement"].round(6)
+    result["overall_rank"] = key.rank(method="min", ascending=False)
+    result["position_rank"] = key.groupby(result["position"]).rank(
+        method="min", ascending=False
+    )
+    return result
+
+
+def _merge_kdef_board(board: pd.DataFrame, valued: pd.DataFrame) -> pd.DataFrame:
+    """Add the K/DEF free agents to the skill board and rank the whole board.
+
+    K/DEF rows come from ``valued`` (their own model, universe VORP), and
+    their ``matchup_adjusted_ppg`` is the K/DEF model's own this-week
+    ``week_projected_points`` rather than the skill board's
+    defense-vs-position figure. ``board_rank`` is then assigned over the
+    combined board on descending ``points_above_replacement`` (six
+    decimals), then descending ``projected_ppg``, then ``player_id``; a row
+    with no VORP sorts last. ``waiver_rank`` stays the skill pipeline's own
+    and is ``NaN`` on K/DEF rows.
+    """
+    kdef = valued[
+        valued["position"].isin(KDEF_POSITIONS) & ~valued["is_rostered"].astype(bool)
+    ]
+    if not kdef.empty:
+        kdef = kdef.assign(matchup_adjusted_ppg=kdef["week_projected_points"])
+
+    frames = [
+        frame
+        for frame in (board.drop(columns="board_rank", errors="ignore"), kdef)
+        if not frame.empty
+    ]
+    if not frames:
+        return board.assign(board_rank=pd.Series(dtype="int64"))
+    combined = pd.concat(frames, ignore_index=True)
+    combined["_value_key"] = pd.to_numeric(
+        combined["points_above_replacement"], errors="coerce"
+    ).round(6)
+    combined = (
+        combined.sort_values(
+            ["_value_key", "projected_ppg", "player_id"],
+            ascending=[False, False, True],
+            na_position="last",
+            kind="stable",
+        )
+        .drop(columns="_value_key")
+        .reset_index(drop=True)
+    )
+    combined.insert(0, "board_rank", range(1, len(combined) + 1))
+    return combined
+
+
+def _board_rows(board: pd.DataFrame, top: int, per_kdef: int) -> pd.DataFrame:
+    """The board rows the bundle carries: the top ``top`` overall, plus the
+    best ``per_kdef`` K and DEF wherever they rank, in ``board_rank`` order.
+    """
+    if board.empty:
+        return board
+    extra = (
+        board[board["position"].isin(KDEF_POSITIONS)]
+        .sort_values("board_rank", kind="stable")
+        .groupby("position", sort=False)
+        .head(per_kdef)
+    )
+    rows = pd.concat([board.head(top), extra], ignore_index=True)
+    return (
+        rows.drop_duplicates(subset="player_id")
+        .sort_values("board_rank", kind="stable")
+        .reset_index(drop=True)
+    )
+
+
+def _valuation_table(
+    valued: pd.DataFrame,
+    catalog: dict,
+    byes: dict,
+    teams_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """The per-league full-universe valuation CSV (see the module docstring).
+
+    Adds injury (from the Sleeper catalog), bye week (from the NFL
+    schedule), and the owning manager's display and team name. Sorted by
+    ``overall_rank`` (unranked last), then position, then ``player_id``;
+    columns follow :data:`VALUATION_COLUMNS`, skipping any absent.
+    """
+    if valued.empty:
+        return pd.DataFrame(columns=VALUATION_COLUMNS)
+
+    table = _add_injury_status(valued, catalog)
+    table["bye_week"] = [byes.get(normalize_team(team)) for team in table["team"]]
+
+    names = {
+        int(row.roster_id): (row.display_name, row.team_name)
+        for row in teams_df.itertuples(index=False)
+        if pd.notna(row.roster_id)
+    }
+
+    def _owner(roster_id: Any, index: int) -> Optional[str]:
+        if roster_id is None or pd.isna(roster_id):
+            return None
+        label = names.get(int(roster_id), (None, None))[index]
+        return None if label is None or pd.isna(label) else label
+
+    table["owner"] = [_owner(rid, 0) for rid in table["roster_id"]]
+    table["owner_team_name"] = [_owner(rid, 1) for rid in table["roster_id"]]
+    table = table.sort_values(
+        ["overall_rank", "position", "player_id"],
+        na_position="last",
+        kind="stable",
+    ).reset_index(drop=True)
+    return table[[column for column in VALUATION_COLUMNS if column in table.columns]]
+
+
 def _build_waiver_board(
     snapshot,
-    raw_rosters: list[dict],
+    universe: pd.DataFrame,
+    kdef_projections: pd.DataFrame,
     catalog: dict,
-    crosswalk: pd.DataFrame,
     scored_weeks: pd.DataFrame,
     season: int,
     cutoff_week: int,
-    upcoming_week: int,
     parameters: ShrinkageParameters,
     schedule: pd.DataFrame,
+    usage_parameters: Optional[UsageModelParameters] = None,
+    usage: Optional[pd.DataFrame] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Rank free agents, and return ``(board, league_population_projections)``.
+    """Rank free agents, and return ``(board, valued_universe)``.
 
-    Mirrors ``cli.build_free_agent_rankings``'s three accuracy-critical
-    composition choices (robust crosswalk, league-wide replacement
-    population, fitted shrinkage parameters), then layers FFA-099's
-    opponent/defense-vs-position context on top. The league-wide projection
-    frame is returned alongside the board because the lineup recommendation
-    needs projections for *rostered* players, who by definition never appear
-    on a waiver board.
+    The skill board mirrors ``cli.build_free_agent_rankings``'s three
+    accuracy-critical composition choices (robust crosswalk, league-wide
+    replacement population, fitted shrinkage parameters), with the player
+    universe (FFA-109) as that population, then layers FFA-099's
+    opponent/defense-vs-position context on top. K/DEF free agents are then
+    merged in from their own model (:func:`_merge_kdef_board`).
+
+    ``usage_parameters``, the league's ``scoring_settings`` and ``usage``
+    switch on the FFA-111 usage blend and FFA-104's absent-prior line. They
+    are passed to *both* the board and the universe projection, so the two
+    agree; ``None`` for both keeps the EB projection alone.
+
+    ``valued_universe`` -- every universe player's projection plus VORP -- is
+    returned alongside because the lineup needs *rostered* players'
+    projections, and the valuation CSV needs everyone's.
     """
     roster_positions = snapshot.roster_positions
+    num_teams = snapshot.league.total_rosters
 
-    free_agent_pool = build_free_agent_pool(
-        raw_rosters, catalog, roster_positions, crosswalk=crosswalk
-    )
-    # No rosters => every startable-position player in the catalog. This is
-    # the population replacement level must be measured over (FFA-095), and
-    # also the only frame that carries projections for rostered players.
-    league_population = build_free_agent_pool(
-        [], catalog, roster_positions, crosswalk=crosswalk
-    )
+    skill_universe = universe[~universe["position"].isin(KDEF_POSITIONS)]
+    population = skill_universe[FREE_AGENT_POOL_COLUMNS].reset_index(drop=True)
+    free_agent_pool = skill_universe.loc[
+        ~skill_universe["is_rostered"].astype(bool), FREE_AGENT_POOL_COLUMNS
+    ].reset_index(drop=True)
 
     board = build_waiver_wire_rankings(
         free_agent_pool,
@@ -468,28 +869,20 @@ def _build_waiver_board(
         season,
         cutoff_week,
         roster_positions,
-        snapshot.league.total_rosters,
+        num_teams,
         parameters,
-        replacement_population=league_population,
-    ).head(RAW_WAIVER_DEPTH)
-
-    board = WAIVER_QUALITY_FILTER(board)
-
-    # Re-rank after filtering. The raw ``waiver_rank`` is computed over the
-    # unfiltered board, so once WAIVER_QUALITY_FILTER removes the teamless
-    # and no-prior rows it leaves gaps (1, 2, 6, 7, 9...) that read as
-    # missing players rather than as removed noise. Keep both: ``board_rank``
-    # is what the page shows, ``waiver_rank`` stays as the underlying
-    # pipeline's own output.
-    board = board.reset_index(drop=True)
-    board.insert(0, "board_rank", range(1, len(board) + 1))
+        replacement_population=population,
+        usage_parameters=usage_parameters,
+        scoring_settings=snapshot.scoring_settings,
+        usage=usage,
+    )
 
     if not board.empty and not schedule.empty:
         defense_vs_position = build_defense_vs_position(
             scored_weeks, season, through_week=cutoff_week
         )
         # ``add_matchup_context`` takes the *cutoff* week and builds context
-        # for ``week + 1`` itself -- passing ``upcoming_week`` here would
+        # for ``week + 1`` itself -- passing the upcoming week here would
         # describe the week after the one being planned for.
         board = add_matchup_context(
             board,
@@ -498,85 +891,227 @@ def _build_waiver_board(
             week=cutoff_week,
             season_end_week=DEFAULT_TOTAL_WEEKS,
         )
+    board = board.assign(projection_source="skill")
 
-    board = _add_injury_status(board, catalog)
-
-    population_projections = build_free_agent_ros_projections(
-        league_population, scored_weeks, season, cutoff_week, parameters
+    skill_projections = build_free_agent_ros_projections(
+        population,
+        scored_weeks,
+        season,
+        cutoff_week,
+        parameters,
+        usage_parameters=usage_parameters,
+        scoring_settings=snapshot.scoring_settings,
+        usage=usage,
+    )
+    valued = _value_players(
+        _projection_universe(skill_projections, kdef_projections, universe),
+        season,
+        roster_positions,
+        num_teams,
     )
 
-    return board, population_projections
+    # ``board_rank`` is what the page shows: assigned after the K/DEF merge,
+    # so it ranks every position on one basis. ``waiver_rank`` stays the
+    # skill pipeline's own output.
+    board = _merge_kdef_board(board, valued)
+    board = _add_injury_status(board, catalog)
+    return board, valued
+
+
+def _replacement_levels(projections: pd.DataFrame) -> dict[str, float]:
+    """Position -> replacement ppg, as the board and the valuation measure it.
+
+    Read from :func:`_value_players`' ``replacement_ppg`` (FFA-068's
+    last-starter baseline over the universe, ``num_teams = total_rosters``),
+    which is constant within a position. Used as the moves' streaming-level
+    fill: what a manager can stream off the wire for a slot nobody on the
+    roster can fill. Empty if the frame carries no replacement levels.
+    """
+    if projections.empty or "replacement_ppg" not in projections.columns:
+        return {}
+    levels = (
+        projections.dropna(subset=["replacement_ppg"])
+        .groupby("position")["replacement_ppg"]
+        .first()
+    )
+    return {
+        POSITION_ALIASES.get(str(position), str(position)): float(value)
+        for position, value in levels.items()
+    }
+
+
+def _rank_moves(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    """Merge separately scored add/drop frames into one ranked list.
+
+    Uses ``build_add_drop_candidates``'s own ordering -- descending
+    ``net_lineup_gain``, then ``starting_ppg_gain``, then projection, then
+    ``player_id``, gains compared at nine decimals -- and renumbers
+    ``add_drop_rank`` over the union.
+    """
+    if not frames:
+        return pd.DataFrame()
+    moves = pd.concat(frames, ignore_index=True)
+    moves["_net"] = moves["net_lineup_gain"].astype("float64").round(9)
+    moves["_gain"] = moves["starting_ppg_gain"].astype("float64").round(9)
+    moves = (
+        moves.sort_values(
+            ["_net", "_gain", "projected_ppg", "player_id"],
+            ascending=[False, False, False, True],
+            kind="stable",
+        )
+        .drop(columns=["_net", "_gain"])
+        .reset_index(drop=True)
+    )
+    moves["add_drop_rank"] = range(1, len(moves) + 1)
+    return moves
+
+
+def _fill_unprojected_slots(
+    placed: list[tuple[str, Optional[str]]],
+    roster_frame: pd.DataFrame,
+    currently_starting: set[str],
+) -> list[tuple[str, Optional[str]]]:
+    """Put an available but unprojected player into each slot the solve left empty.
+
+    Display only: ``optimal_lineup`` ignores a player with no projection, so
+    a rookie kicker missing from the ID crosswalk leaves the ``K`` slot empty
+    and the page would otherwise tell the manager to bench his only kicker.
+    A filler adds nothing to ``projected_points``. Players already in the
+    manager's lineup are preferred, then ``player_id`` order.
+    """
+    taken = {pid for _, pid in placed if pid is not None}
+    pool = roster_frame[
+        roster_frame["available"]
+        & roster_frame[LINEUP_PPG_COLUMN].isna()
+        & ~roster_frame["player_id"].isin(taken)
+    ]
+    pool = sorted(
+        zip(pool["player_id"], pool["position"]),
+        key=lambda item: (item[0] not in currently_starting, item[0]),
+    )
+
+    filled: list[tuple[str, Optional[str]]] = []
+    for slot, pid in placed:
+        if pid is None:
+            eligible = START_SLOT_ELIGIBILITY.get(slot, ())
+            for candidate, position in pool:
+                label = POSITION_ALIASES.get(str(position), str(position))
+                if candidate not in taken and label in eligible:
+                    pid = candidate
+                    taken.add(candidate)
+                    break
+        filled.append((slot, pid))
+    return filled
 
 
 def _build_lineup(
-    snapshot,
+    roster_positions: list[str],
     my_roster: dict,
     population_projections: pd.DataFrame,
     board: pd.DataFrame,
     catalog: dict,
     byes: dict,
     upcoming_week: int,
+    season_end_week: int,
 ) -> dict:
     """Recommend a starting lineup and the best add/drop moves for one roster.
 
-    Kickers and defenses are excluded from both the slot list and the
-    candidate pool: nflverse publishes no player-week rows for them, so they
-    have no projection, and ``optimal_lineup`` would read an unprojectable
-    player as an empty slot and understate the lineup total.
+    Pure given its inputs (no network), so it is tested directly.
+
+    - **Lineup**: the coming week only. Availability is the package rule
+      (``add_availability``): Out, IR, suspended and bye-week players are
+      never started; Questionable players are, and are flagged.
+    - **Moves**: scored over ``[upcoming_week, season_end_week]`` with each
+      player's per-week availability (``build_add_drop_candidates``'s
+      horizon), so a player merely Out or on bye this week is not a free
+      drop. IR-slot players are never the drop, and an open roster spot
+      means no drop at all. Free agents with a long-term status (IR, PUP,
+      ...) are left off the shortlist: they are stashes, and the four-week
+      absence the package assumes is a lower bound that would overrate a
+      season-ending injury.
+    - **K/DEF**: the lineup is solved on :data:`LINEUP_PPG_COLUMN` --
+      the K/DEF model's this-week ``week_projected_points`` for kickers and
+      defenses, ``projected_ppg`` for everyone else (a frame without the
+      column is solved on ``projected_ppg``). A slot for a position with no
+      projection anywhere in ``population_projections`` is dropped
+      (:func:`unprojectable_positions`) rather than read as empty. The move
+      shortlist is the top :data:`ADD_DROP_CANDIDATES` skill players plus
+      the top :data:`KDEF_MOVE_CANDIDATES` per K/DEF, by ``projected_ppg``.
+    - **Streaming fill**: the moves score a slot nobody on the roster can
+      fill that week at the position's replacement level
+      (:func:`_replacement_levels`, ``roster_fit``'s ``empty_slot_values``),
+      so a backup is worth only his margin over a waiver streamer.
     """
     player_ids = [str(pid) for pid in (my_roster.get("players") or [])]
-    starters_now = [str(pid) for pid in (my_roster.get("starters") or [])]
+    starters_now = {str(pid) for pid in (my_roster.get("starters") or [])}
+    reserve = {str(pid) for pid in (my_roster.get("reserve") or [])}
+    spots = open_roster_spots(my_roster, roster_positions)
+
+    excluded = unprojectable_positions(population_projections)
+    lineup_slots = [slot for slot in roster_positions if slot not in excluded]
+    slot_labels = starting_slots(lineup_slots)
+    horizon = {
+        "from_week": upcoming_week,
+        "through_week": max(upcoming_week, season_end_week),
+    }
 
     roster_frame = build_roster_projection_frame(
         player_ids, population_projections, id_column="player_id"
     )
     if not roster_frame.empty:
         roster_frame = roster_frame[
-            ~roster_frame["position"].isin(UNPROJECTABLE_POSITIONS)
+            ~roster_frame["position"].isin(excluded)
         ].reset_index(drop=True)
-
-    lineup_slots = [
-        slot
-        for slot in snapshot.roster_positions
-        if slot not in UNPROJECTABLE_POSITIONS
-    ]
-
-    slot_labels = starting_slots(lineup_slots)
 
     if roster_frame.empty:
         return {
             "projected_slots": slot_labels,
+            "slot_order": [],
             "recommended_starters": [],
             "bench": [],
             "unavailable": [],
             "projected_points": None,
             "add_drop": [],
-            "excluded_positions": sorted(UNPROJECTABLE_POSITIONS),
+            "excluded_positions": sorted(excluded),
+            "open_roster_spots": spots,
+            "horizon": horizon,
+            "streaming_values": _replacement_levels(population_projections),
         }
 
+    roster_frame["player_id"] = roster_frame["player_id"].astype(str)
+    if LINEUP_PPG_COLUMN not in roster_frame.columns:
+        roster_frame[LINEUP_PPG_COLUMN] = roster_frame["projected_ppg"]
     roster_frame = _add_injury_status(roster_frame, catalog)
     roster_frame["bye_week"] = [
         byes.get(normalize_team(team)) for team in roster_frame["team"]
     ]
-    roster_frame["on_bye"] = roster_frame["bye_week"] == upcoming_week
-    roster_frame["unavailable"] = (
-        roster_frame["injury_status"].isin(UNAVAILABLE_INJURY_STATUSES)
-        | roster_frame["on_bye"]
-    )
+    roster_frame = add_availability(roster_frame, upcoming_week)
+    roster_frame["unavailable"] = ~roster_frame["available"]
+    roster_frame["in_reserve"] = roster_frame["player_id"].isin(reserve)
 
-    # Solve the lineup over available players only. Feeding the whole roster
-    # in would start an Out player or one on a bye -- see
-    # UNAVAILABLE_INJURY_STATUSES.
-    available = roster_frame[~roster_frame["unavailable"]].reset_index(drop=True)
-    solution = optimal_lineup(available, lineup_slots)
-    recommended = set(solution.starters)
+    # ``optimal_lineup`` honors the ``available`` column written above.
+    solution = optimal_lineup(roster_frame, lineup_slots, ppg_column=LINEUP_PPG_COLUMN)
+    placed = _fill_unprojected_slots(
+        assign_lineup_slots(
+            roster_frame,
+            solution.starters,
+            lineup_slots,
+            ppg_column=LINEUP_PPG_COLUMN,
+        ),
+        roster_frame,
+        starters_now,
+    )
+    slot_of = {pid: slot for slot, pid in placed if pid is not None}
+    slot_rank = {pid: index for index, (_, pid) in enumerate(placed) if pid}
 
     roster_frame = roster_frame.assign(
-        recommended_start=roster_frame["player_id"].isin(recommended),
+        recommended_start=roster_frame["player_id"].isin(slot_of),
         currently_starting=roster_frame["player_id"].isin(starters_now),
+        projection_missing=roster_frame[LINEUP_PPG_COLUMN].isna(),
+        slot=[slot_of.get(pid) for pid in roster_frame["player_id"]],
     )
     roster_frame = roster_frame.sort_values(
-        by=["recommended_start", "projected_ppg"], ascending=[False, False]
+        by=["recommended_start", LINEUP_PPG_COLUMN], ascending=[False, False]
     ).reset_index(drop=True)
 
     roster_columns = [
@@ -584,56 +1119,146 @@ def _build_lineup(
         "full_name",
         "position",
         "team",
+        "slot",
         "injury_status",
         "injury_body_part",
         "bye_week",
         "on_bye",
+        "available",
         "unavailable",
+        "unavailable_reason",
+        "in_reserve",
+        "projection_missing",
+        "projection_source",
         "projected_ppg",
+        LINEUP_PPG_COLUMN,
+        "week_opponent",
         "games_to_date",
         "ppg_to_date",
+        "last3_ppg",
         "confidence_tier",
+        "targets_per_game",
+        "carries_per_game",
+        "target_share",
+        *USAGE_EXPLANATION_COLUMNS,
         "recommended_start",
         "currently_starting",
     ]
 
-    # Add/drop is a "what should I do right now" question, so an unavailable
-    # candidate cannot answer it -- an Out player adds nothing to this week's
-    # lineup. They stay on the free-agent board (flagged), where the question
-    # is rest-of-season value rather than this week's start.
     candidates = board
     if not candidates.empty and "injury_status" in candidates.columns:
         candidates = candidates[
-            ~candidates["injury_status"].isin(UNAVAILABLE_INJURY_STATUSES)
+            ~candidates["injury_status"].isin(LONG_TERM_INJURY_STATUSES)
         ]
     if not candidates.empty:
-        candidates = candidates.sort_values(
-            by="projected_ppg", ascending=False
-        ).head(ADD_DROP_CANDIDATES)
-
-    add_drop = pd.DataFrame()
-    if not candidates.empty:
-        add_drop = build_add_drop_candidates(
-            available, candidates, lineup_slots, max_candidates=ADD_DROP_CANDIDATES
+        candidates = candidates[~candidates["position"].isin(excluded)].sort_values(
+            by="projected_ppg", ascending=False, kind="stable"
+        )
+        is_kdef = candidates["position"].isin(KDEF_POSITIONS)
+        candidates = pd.concat(
+            [
+                candidates[~is_kdef].head(ADD_DROP_CANDIDATES),
+                candidates[is_kdef].groupby("position").head(KDEF_MOVE_CANDIDATES),
+            ],
+            ignore_index=True,
         )
 
-    startable = roster_frame[~roster_frame["unavailable"]]
+    streaming = _replacement_levels(population_projections)
+    add_drop = pd.DataFrame()
+    if not candidates.empty:
+        # Skill players take the roster-wide cheapest drop; a K or DEF is
+        # scored as a swap for the rostered one (``same_position_drop``) --
+        # otherwise "carry a second kicker, drop a bench RB" wins on a full
+        # week of bye coverage, which is not a move anyone should make.
+        is_kdef = candidates["position"].isin(KDEF_POSITIONS)
+        scored = [
+            build_add_drop_candidates(
+                roster_frame,
+                group,
+                lineup_slots,
+                max_candidates=len(group),
+                week=upcoming_week,
+                season_end_week=season_end_week,
+                reserve_player_ids=reserve,
+                open_roster_spots=spots,
+                same_position_drop=like_for_like,
+                empty_slot_values=streaming or None,
+            )
+            for group, like_for_like in (
+                (candidates[~is_kdef], False),
+                (candidates[is_kdef], True),
+            )
+            if not group.empty
+        ]
+        add_drop = _rank_moves([frame for frame in scored if not frame.empty])
+        context = [c for c in MOVE_CONTEXT_COLUMNS if c in candidates.columns]
+        if not add_drop.empty and context:
+            extra = candidates[["player_id", *context]].assign(
+                player_id=candidates["player_id"].astype(str)
+            )
+            add_drop = add_drop.merge(extra, on="player_id", how="left")
+
+    available = roster_frame[roster_frame["available"]]
+    starters = available[available["recommended_start"]]
+    starters = starters.assign(
+        _slot_rank=starters["player_id"].map(slot_rank)
+    ).sort_values("_slot_rank", kind="stable")
 
     return {
         "projected_slots": slot_labels,
-        "recommended_starters": _records(
-            startable[startable["recommended_start"]], roster_columns
-        ),
-        "bench": _records(
-            startable[~startable["recommended_start"]], roster_columns
-        ),
+        "slot_order": [{"slot": slot, "player_id": pid} for slot, pid in placed],
+        "recommended_starters": _records(starters, roster_columns),
+        "bench": _records(available[~available["recommended_start"]], roster_columns),
         "unavailable": _records(
-            roster_frame[roster_frame["unavailable"]], roster_columns
+            roster_frame[~roster_frame["available"]], roster_columns
         ),
         "projected_points": _clean(solution.points_per_game),
         "add_drop": _records(add_drop),
-        "excluded_positions": sorted(UNPROJECTABLE_POSITIONS),
+        "excluded_positions": sorted(excluded),
+        "open_roster_spots": spots,
+        "horizon": horizon,
+        "streaming_values": streaming,
     }
+
+
+def _load_usage_inputs(
+    season: int,
+) -> tuple[Optional[UsageModelParameters], Optional[pd.DataFrame]]:
+    """The fitted usage model and the snap/xFP frame, from the local caches.
+
+    Returns ``(usage_parameters, usage)``. The frame covers ``season`` and
+    ``season - 1`` -- the window the usage features read. Either half may
+    be ``None`` (see the module docstring's "The skill-player model" for
+    what each fallback costs); the build prints which model it is using so
+    a degraded run is visible.
+    """
+    usage_parameters = load_usage_model_parameters()
+    if usage_parameters is None:
+        print(
+            "usage model: no fitted parameters (run scripts/fit_usage_model.py) "
+            "-- skill players projected by EB alone",
+            flush=True,
+        )
+        return None, None
+
+    try:
+        usage = load_usage_player_weeks([season - 1, season])
+    except FileNotFoundError as error:
+        print(
+            f"usage model: fitted, but no snap/xFP cache ({error}) "
+            "-- using the no-snap model",
+            flush=True,
+        )
+        return usage_parameters, None
+
+    current = usage[usage["season"] == season]
+    through = int(current["week"].max()) if not current.empty else None
+    print(
+        f"usage model: fitted; snap/xFP rows {len(usage)} "
+        f"({season} through week {through})",
+        flush=True,
+    )
+    return usage_parameters, usage
 
 
 def build_bundle(
@@ -652,6 +1277,7 @@ def build_bundle(
     parameters = load_shrinkage_parameters() or ShrinkageParameters(
         n0_by_position={}, default_n0=DEFAULT_N0
     )
+    usage_parameters, usage = _load_usage_inputs(season)
 
     user = client.get_user(username)
     nfl_state = _nfl_state(client)
@@ -669,12 +1295,35 @@ def build_bundle(
     current_raw = _raw(season)
     prior_raw = _raw(season - 1)
 
+    # Verified name matches for players the two ID sources miss (a rookie
+    # kicker with no Sleeper id in DynastyProcess, for one). Only adds rows.
+    crosswalk = extend_crosswalk_with_name_matches(
+        crosswalk, catalog, pd.concat([current_raw, prior_raw], ignore_index=True)
+    )
+
+    # The K/DEF model reads nflverse's *raw* weekly table (GSIS ``player_id``,
+    # ``season_type``), not the provider-normalized frames above.
+    nflverse_client = NflverseClient()
+    raw_stats_by_season = {
+        stats_season: get_player_stats_cached(nflverse_client, stats_season)
+        for stats_season in (season - 1, season)
+    }
+
     games = get_games_cached(NflverseScheduleClient())
-    schedule = normalize_schedule(games, season) if games is not None else pd.DataFrame()
+    schedule = (
+        normalize_schedule(games, season) if games is not None else pd.DataFrame()
+    )
     byes = bye_weeks(schedule, DEFAULT_TOTAL_WEEKS) if not schedule.empty else {}
+    # FFA-108: a fantasy week is final only once every NFL game in it is. A
+    # missing or stale schedule cache therefore holds weeks back rather than
+    # publishing partial scores -- refresh it (docs/dashboard.md, step 1).
+    nfl_completed = completed_nfl_weeks(games, season) if games is not None else []
+    print(f"NFL weeks final in the schedule cache: {nfl_completed}", flush=True)
 
     commentary_dir = out_dir / "commentary"
     commentary_dir.mkdir(parents=True, exist_ok=True)
+    valuations_dir = out_dir / "valuations"
+    valuations_dir.mkdir(parents=True, exist_ok=True)
 
     leagues: list[dict] = []
     for slug in league_slugs:
@@ -685,10 +1334,19 @@ def build_bundle(
         snapshot, season_matchup_df, analytics = _league_frames(
             client, league_id, total_weeks
         )
-        completed = _completed_weeks(season_matchup_df)
+        completed = _completed_weeks(season_matchup_df, nfl_completed)
         upcoming = (max(completed) + 1) if completed else 1
         cutoff = max(completed) if completed else 0
-        print(f"[{slug}]   completed weeks {completed}, upcoming {upcoming}", flush=True)
+        boundaries = derive_season_boundaries(snapshot.league, total_weeks=total_weeks)
+        season_end_week = (
+            boundaries.regular_season_weeks[-1]
+            if boundaries.regular_season_weeks
+            else total_weeks
+        )
+        print(
+            f"[{slug}]   completed weeks {completed}, upcoming {upcoming}",
+            flush=True,
+        )
 
         weeks_payload = [
             _week_payload(
@@ -720,29 +1378,62 @@ def build_bundle(
             player_id_column="gsis_id",
         )
 
-        print(f"[{slug}]   ranking free agents (cutoff week {cutoff})", flush=True)
-        board, population_projections = _build_waiver_board(
-            snapshot,
-            raw_rosters,
+        universe = build_player_universe(
+            raw_rosters, catalog, snapshot.roster_positions, crosswalk=crosswalk
+        )
+        # Every rostered K/DEF gets a projection row, even one the catalog
+        # shows without an NFL team.
+        rostered_kdef = universe.loc[
+            universe["is_rostered"] & universe["position"].isin(KDEF_POSITIONS),
+            "player_id",
+        ].astype(str)
+        kdef_projections = build_kicker_defense_projections(
             catalog,
-            crosswalk,
-            scored_weeks,
+            snapshot.scoring_settings,
             season,
             cutoff,
             upcoming,
+            raw_stats_by_season,
+            games if games is not None else pd.DataFrame(),
+            crosswalk=crosswalk,
+            include_player_ids=list(rostered_kdef),
+        )
+
+        print(f"[{slug}]   ranking free agents (cutoff week {cutoff})", flush=True)
+        board, valued = _build_waiver_board(
+            snapshot,
+            universe,
+            kdef_projections,
+            catalog,
+            scored_weeks,
+            season,
+            cutoff,
             parameters,
             schedule,
+            usage_parameters=usage_parameters,
+            usage=usage,
+        )
+
+        valuation = _valuation_table(valued, catalog, byes, snapshot.teams_df)
+        valuation_path = valuations_dir / f"{slug}_week{upcoming}.csv"
+        valuation.to_csv(valuation_path, index=False)
+        rostered_count = int(valuation["is_rostered"].sum()) if len(valuation) else 0
+        print(
+            f"[{slug}]   valuation: {len(valuation)} players "
+            f"({rostered_count} rostered) -> {valuation_path}",
+            flush=True,
         )
 
         lineup = (
             _build_lineup(
-                snapshot,
+                snapshot.roster_positions,
                 my_roster,
-                population_projections,
+                valued,
                 board,
                 catalog,
                 byes,
                 upcoming,
+                season_end_week,
             )
             if my_roster
             else None
@@ -757,8 +1448,10 @@ def build_bundle(
             "team",
             "injury_status",
             "injury_body_part",
+            "projection_source",
             "projected_ppg",
             "matchup_adjusted_ppg",
+            "week_projected_points",
             "points_above_replacement",
             "ppg_above_replacement",
             "games_to_date",
@@ -778,6 +1471,7 @@ def build_bundle(
             "remaining_schedule_multiplier",
             "remaining_games_scheduled",
             "schedule_adjusted_ros_points",
+            *USAGE_EXPLANATION_COLUMNS,
         ]
 
         leagues.append(
@@ -792,6 +1486,7 @@ def build_bundle(
                 "my_roster_id": my_roster.get("roster_id") if my_roster else None,
                 "completed_weeks": completed,
                 "upcoming_week": upcoming,
+                "regular_season_end_week": season_end_week,
                 "upcoming_matchup": upcoming_matchup,
                 "teams": _records(
                     snapshot.teams_df,
@@ -801,7 +1496,15 @@ def build_bundle(
                 "free_agents": {
                     "cutoff_week": cutoff,
                     "for_week": upcoming,
-                    "rows": _records(board.head(top_free_agents), board_columns),
+                    "rows": _records(
+                        _board_rows(board, top_free_agents, KDEF_BOARD_ROWS),
+                        board_columns,
+                    ),
+                },
+                "valuation": {
+                    "file": f"valuations/{valuation_path.name}",
+                    "players": len(valuation),
+                    "rostered": rostered_count,
                 },
                 "lineup": lineup,
             }
@@ -813,6 +1516,7 @@ def build_bundle(
         "username": username,
         "user_id": user["user_id"],
         "nfl_state": nfl_state,
+        "nfl_completed_weeks": nfl_completed,
         "leagues": leagues,
     }
 

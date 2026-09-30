@@ -17,6 +17,7 @@ import pytest
 from fantasy_analyzer.players.free_agents import FREE_AGENT_POOL_COLUMNS
 from fantasy_analyzer.players.ros_projection import ShrinkageParameters
 from fantasy_analyzer.players.waiver_rankings import (
+    DEFAULT_ABSENT_PRIOR_RATIO,
     FREE_AGENT_PROJECTION_COLUMNS,
     OPPORTUNITY_SUMMARY_COLUMNS,
     WAIVER_WIRE_RANKING_COLUMNS,
@@ -183,17 +184,25 @@ def test_zero_games_free_agent_uses_prior_season():
     assert wb["confidence_tier"] == "low"
 
 
-def test_zero_games_no_prior_falls_back_to_positional_mean_of_observed_free_agents():
+def test_zero_games_no_prior_gets_the_absent_prior():
+    """FFA-104: no games and no prior resolves *below* the positional mean.
+
+    The positional mean among free agents with >= 1 game this season is
+    WR_A alone at 9.0. WR_C has neither games nor a prior, so with no usage
+    model supplied he gets ``DEFAULT_ABSENT_PRIOR_RATIO["WR"] * 9.0 = 0.41
+    * 9.0 = 3.69`` -- not the 9.0 the pre-FFA-104 fallback gave him.
+    """
     result = build_free_agent_ros_projections(
         POOL, SCORED_WEEKS, 2025, 4, PARAMETERS, prior_season_weeks=PRIOR_SEASON_WEEKS
     )
     wc = result.loc[result["player_id"] == "12"].iloc[0]
     assert wc["games_to_date"] == pytest.approx(0.0)
     assert pd.isna(wc["prior_season_ppg"])
-    # Fallback: mean ppg_to_date among free agents with >= 1 game this
-    # season, which is WR_A alone at 9.0.
-    assert wc["prior_resolved_ppg"] == pytest.approx(9.0)
-    assert wc["projected_ppg"] == pytest.approx(9.0)
+    assert DEFAULT_ABSENT_PRIOR_RATIO["WR"] == pytest.approx(0.41)
+    assert wc["prior_resolved_ppg"] == pytest.approx(3.69)
+    assert wc["projected_ppg"] == pytest.approx(3.69)
+    assert wc["eb_projected_ppg"] == pytest.approx(3.69)
+    assert wc["projection_model"] == "absent_prior"
     assert wc["confidence_tier"] == "low"
 
 
@@ -252,16 +261,19 @@ def test_empty_pool_returns_empty_ranking_frame() -> None:
 def test_toy_waiver_ranking_vorp_and_ties() -> None:
     """Field of 3 WRs with a projection (A, B, C); starter cutoff clamps to 3.
 
-    Replacement = the worst of the three by projected ppg -- WR_B at 5.0
-    ppg. ``points_above_replacement = total - 5.0 * 13``:
+    WR_C has no games and no prior, so (FFA-104) he projects at the
+    absent prior ``0.41 * 9.0 = 3.69`` ppg and is now the replacement
+    level. ``points_above_replacement = 13 * (ppg - 3.69)``:
 
-        WR_A: 117 - 65 = 52     WR_B: 65 - 65 = 0     WR_C: 117 - 65 = 52
+        WR_A: 13 * 5.31 = 69.03   WR_B: 13 * 1.31 = 17.03   WR_C: 0
 
-    WR_A and WR_C tie for rank 1 (standard competition ranking); WR_B is
-    rank 3. WR_D has no crosswalk and so no projection at all -- he is
-    excluded from the VORP computation entirely and gets ``NaN`` in every
-    VORP column and ``waiver_rank``, sorting last, per the "null, not
-    dropped" convention.
+    Before FFA-104, WR_C inherited the positional mean (9.0) and tied WR_A
+    for rank 1 -- the defect: a player with no data ranked with the best
+    free agent. Ties are covered by
+    ``test_absent_prior_players_tie_below_players_with_evidence``. WR_D has
+    no crosswalk and so no projection at all -- he is excluded from the
+    VORP computation entirely and gets ``NaN`` in every VORP column and
+    ``waiver_rank``, sorting last, per the "null, not dropped" convention.
     """
     result = build_waiver_wire_rankings(
         POOL,
@@ -277,14 +289,14 @@ def test_toy_waiver_ranking_vorp_and_ties() -> None:
 
     by_id = {row["player_id"]: row for _, row in result.iterrows()}
 
-    assert by_id["10"]["replacement_ppg"] == pytest.approx(5.0)
-    assert by_id["10"]["points_above_replacement"] == pytest.approx(52.0)
-    assert by_id["12"]["points_above_replacement"] == pytest.approx(52.0)
-    assert by_id["11"]["points_above_replacement"] == pytest.approx(0.0)
+    assert by_id["10"]["replacement_ppg"] == pytest.approx(3.69)
+    assert by_id["10"]["points_above_replacement"] == pytest.approx(69.03)
+    assert by_id["11"]["points_above_replacement"] == pytest.approx(17.03)
+    assert by_id["12"]["points_above_replacement"] == pytest.approx(0.0)
 
     assert by_id["10"]["waiver_rank"] == pytest.approx(1.0)
-    assert by_id["12"]["waiver_rank"] == pytest.approx(1.0)
-    assert by_id["11"]["waiver_rank"] == pytest.approx(3.0)
+    assert by_id["11"]["waiver_rank"] == pytest.approx(2.0)
+    assert by_id["12"]["waiver_rank"] == pytest.approx(3.0)
     assert math.isnan(by_id["13"]["waiver_rank"])
 
     # Explanatory columns survive the merge.
@@ -390,8 +402,9 @@ def test_thin_prior_season_falls_back_to_positional_mean() -> None:
     his resolved prior. His raw prior is 30.0 ppg off a single week-18
     2024 appearance -- the Phil Mafah case from
     :data:`DEFAULT_MIN_PRIOR_GAMES`'s docstring. With the guard at its
-    default of 4 games, the resolved prior falls back to the positional
-    mean among WRs with games to date, which is WR A's 9.0 ppg.
+    default of 4 games the prior is untrusted, and with no games either he
+    is an absent-prior player (FFA-104): ``0.41 *`` the positional mean
+    among WRs with games to date (WR A's 9.0) ``= 3.69``.
 
     The raw figures survive in the output so a board can show why: the
     guard nulls the *resolved* prior, never the reported one.
@@ -409,8 +422,9 @@ def test_thin_prior_season_falls_back_to_positional_mean() -> None:
     assert we["prior_season_ppg"] == pytest.approx(30.0)
     assert we["prior_season_games"] == pytest.approx(1.0)
     assert we["blend_weight"] == pytest.approx(0.0)
-    assert we["prior_resolved_ppg"] == pytest.approx(9.0)
-    assert we["projected_ppg"] == pytest.approx(9.0)
+    assert we["prior_resolved_ppg"] == pytest.approx(3.69)
+    assert we["projected_ppg"] == pytest.approx(3.69)
+    assert we["projection_model"] == "absent_prior"
 
 
 def test_min_prior_games_zero_restores_the_untrusted_prior() -> None:
@@ -549,13 +563,13 @@ def test_replacement_population_raises_the_bar_and_is_not_returned() -> None:
 def test_replacement_population_widens_the_fallback_prior() -> None:
     """The positional-mean fallback becomes league-wide too (FFA-095).
 
-    WR C has neither games this season nor a prior season, so his
-    projection *is* the positional mean. Over the wire alone that mean is
-    WR A's 9.0; adding three rostered WRs at 20/18/16 raises it. This is
-    the documented knock-on effect of supplying a replacement_population,
-    not an accident -- once the frame of reference is the league, an
-    unknown player is measured against the league's average, not the
-    wire's.
+    WR C has neither games this season nor a prior season, so on this
+    EB-only path his projection is ``0.41 *`` the positional mean (FFA-104).
+    Over the wire alone that mean is WR A's 9.0; adding three rostered WRs
+    at 20/18/16 raises it. This is the documented knock-on effect of
+    supplying a replacement_population -- and the population dependence
+    FFA-104's fitted absent-prior line removes when a usage model is
+    supplied.
     """
     wire_only = build_waiver_wire_rankings(
         POOL,
@@ -582,10 +596,10 @@ def test_replacement_population_widens_the_fallback_prior() -> None:
     wire_c = wire_only.loc[wire_only["player_id"] == "12"].iloc[0]
     league_c = league_wide.loc[league_wide["player_id"] == "12"].iloc[0]
 
-    assert wire_c["prior_resolved_ppg"] == pytest.approx(9.0)
-    # mean(9.0, 20.0, 18.0, 16.0) -- WR A plus the three rostered WRs.
-    assert league_c["prior_resolved_ppg"] == pytest.approx(15.75)
-    assert league_c["projected_ppg"] == pytest.approx(15.75)
+    assert wire_c["prior_resolved_ppg"] == pytest.approx(0.41 * 9.0)
+    # 0.41 * mean(9.0, 20.0, 18.0, 16.0) -- WR A plus the three rostered WRs.
+    assert league_c["prior_resolved_ppg"] == pytest.approx(0.41 * 15.75)
+    assert league_c["projected_ppg"] == pytest.approx(0.41 * 15.75)
 
 
 def test_replacement_population_reranks_only_free_agents() -> None:
@@ -730,3 +744,301 @@ def test_opportunity_columns_survive_into_the_ranking() -> None:
     )
     assert set(OPPORTUNITY_SUMMARY_COLUMNS).issubset(WAIVER_WIRE_RANKING_COLUMNS)
     assert result.iloc[0]["target_share"] == pytest.approx(0.20)
+
+
+# --------------------------------------------------------------------------
+# FFA-111 -- usage-model integration, explanation columns, FFA-104 ties
+# --------------------------------------------------------------------------
+
+from fantasy_analyzer.players.usage_projection import (  # noqa: E402
+    RATE_DEFINITIONS,
+    STAT_LINE_COLUMNS,
+    RateParameters,
+    UsageModelParameters,
+    VolumeParameters,
+)
+from fantasy_analyzer.players.waiver_rankings import (  # noqa: E402
+    MODEL_EXPLANATION_COLUMNS,
+)
+
+HALF_PPR = {"rec": 0.5, "rec_yd": 0.1, "rec_td": 6.0}
+
+_STAT_ZEROES = {column: 0.0 for column in STAT_LINE_COLUMNS}
+
+
+def _stat_week(
+    gsis_id: str, season: int, week: int, position: str = "WR", **stats
+) -> dict:
+    row = {
+        "season": season,
+        "week": week,
+        "player_id": gsis_id,
+        "player_name": gsis_id,
+        "position": position,
+        **_STAT_ZEROES,
+    }
+    row.update(stats)
+    row["fantasy_points"] = (
+        0.5 * row["receptions"]
+        + 0.1 * row["receiving_yards"]
+        + 6 * row["receiving_tds"]
+    )
+    return row
+
+
+#: WR A: four games of 8 targets, 4 catches, 50 yards -> 7.0 half-PPR each.
+USAGE_WEEKS = pd.DataFrame(
+    [
+        _stat_week("gwa", 2025, week, targets=8, receptions=4, receiving_yards=50)
+        for week in range(1, 5)
+    ]
+    + [_stat_week("gk", 2025, week, position="K") for week in range(1, 5)]
+)
+
+
+def _usage_parameters(blend: float = 0.75, **overrides) -> UsageModelParameters:
+    """Hand-set constants (not fitted) for the integration toy example."""
+    zero = VolumeParameters(1.0, 0.0, 0.0, 0.0, 0.0)
+    rates = {
+        rate: RateParameters(k=1e6, prior_weight=0.0, mean=0.0)
+        for rate in RATE_DEFINITIONS
+    }
+    rates["catch_rate"] = RateParameters(k=32.0, prior_weight=0.0, mean=0.75)
+    rates["receiving_yards_per_target"] = RateParameters(
+        k=32.0, prior_weight=0.0, mean=7.25
+    )
+    rates["receiving_td_rate"] = RateParameters(k=32.0, prior_weight=0.0, mean=0.05)
+    fields = dict(
+        volume={
+            "WR": {
+                "targets": VolumeParameters(1.0, 0.0, 0.0, 8.0, 8.0),
+                "carries": zero,
+                "attempts": zero,
+            }
+        },
+        rates={"WR": rates},
+        blend_weight={"WR": blend},
+        absent_prior_stat_line={
+            "WR": {
+                **_STAT_ZEROES,
+                "targets": 2.0,
+                "receptions": 1.0,
+                "receiving_yards": 10.0,
+            }
+        },
+    )
+    fields.update(overrides)
+    return UsageModelParameters(**fields)
+
+
+def _usage_pool(extra_columns: bool = False) -> pd.DataFrame:
+    pool = _free_agent_pool(
+        [
+            _pool_row("10", "WR", "gwa", True, full_name="WR A"),
+            _pool_row("30", "WR", "gz1", True, full_name="Absent 1"),
+            _pool_row("31", "WR", "gz2", True, full_name="Absent 2"),
+            _pool_row("40", "K", "gk", True, full_name="Kicker"),
+            _pool_row("SF", "DEF", None, False, full_name="49ers D/ST"),
+        ]
+    )
+    if extra_columns:
+        pool["is_rostered"] = [False, False, False, True, True]
+        pool["roster_id"] = pd.array([None, None, None, 3, 4], dtype="Int64")
+    return pool
+
+
+def test_usage_model_projection_and_blend_by_hand() -> None:
+    """WR A, cutoff week 4, half-PPR.
+
+    EB: WR A is the only WR with games, so his prior resolves to his own
+    7.0 and ``eb_projected_ppg = 7.0``. Usage: targets (4*8 + 1*8)/5 = 8.0;
+    catch (16 + 32*0.75)/64 = 0.625; yards/target (200 + 32*7.25)/64 = 6.75;
+    TD (0 + 32*0.05)/64 = 0.025. Stat line 8 targets, 5 catches, 54 yards,
+    0.2 TD -> 2.5 + 5.4 + 1.2 = 9.1. Blend 0.75*9.1 + 0.25*7.0 = 8.575, and
+    ``projected_ros_points = 8.575 * 13``.
+    """
+    result = build_free_agent_ros_projections(
+        _usage_pool(),
+        USAGE_WEEKS,
+        2025,
+        4,
+        PARAMETERS,
+        prior_season_weeks=pd.DataFrame(),
+        usage_parameters=_usage_parameters(),
+        scoring_settings=HALF_PPR,
+    )
+    wa = result.loc[result["player_id"] == "10"].iloc[0]
+    assert wa["eb_projected_ppg"] == pytest.approx(7.0)
+    assert wa["usage_projected_ppg"] == pytest.approx(9.1)
+    assert wa["projected_ppg"] == pytest.approx(8.575)
+    assert wa["projection_model"] == "blend"
+    assert wa["projected_ros_points"] == pytest.approx(8.575 * 13)
+    assert wa["projected_targets_per_game"] == pytest.approx(8.0)
+    assert wa["projected_carries_per_game"] == pytest.approx(0.0)
+    assert wa["projected_pass_attempts_per_game"] == pytest.approx(0.0)
+    # No usage frame: snap/xFP explanation columns are NaN, never zero.
+    assert math.isnan(wa["snap_share"])
+    assert math.isnan(wa["xfp_per_game"])
+
+
+def test_usage_frame_supplies_snap_and_xfp_columns() -> None:
+    """Snap share mean(0.8, 0.8, 0.6, 1.0) = 0.8, last two 0.8.
+
+    xFP per game (half-PPR): 0.5*5 + 0.1*60 + 6*0.5 = 11.5, so points over
+    expected = 7.0 - 11.5 = -4.5: he has scored less than his usage was
+    worth. With snap data present the main (snap) parameter set applies.
+    """
+    usage = pd.DataFrame(
+        [
+            {
+                "season": 2025,
+                "week": week,
+                "gsis_id": "gwa",
+                "offense_snaps": 50,
+                "offense_snap_pct": pct,
+                "ep_rec_attempt": 8.0,
+                "ep_receptions_exp": 5.0,
+                "ep_rec_yards_gained_exp": 60.0,
+                "ep_rec_touchdown_exp": 0.5,
+            }
+            for week, pct in zip(range(1, 5), [0.8, 0.8, 0.6, 1.0])
+        ]
+    )
+    parameters = _usage_parameters(
+        blend=0.75, no_snap_fallback=_usage_parameters(blend=0.5)
+    )
+    with_usage = build_free_agent_ros_projections(
+        _usage_pool(),
+        USAGE_WEEKS,
+        2025,
+        4,
+        PARAMETERS,
+        prior_season_weeks=pd.DataFrame(),
+        usage_parameters=parameters,
+        scoring_settings=HALF_PPR,
+        usage=usage,
+    )
+    wa = with_usage.loc[with_usage["player_id"] == "10"].iloc[0]
+    assert wa["snap_share"] == pytest.approx(0.8)
+    assert wa["snap_share_last2"] == pytest.approx(0.8)
+    assert wa["xfp_per_game"] == pytest.approx(11.5)
+    assert wa["points_over_expected_per_game"] == pytest.approx(-4.5)
+    assert wa["projected_ppg"] == pytest.approx(8.575)
+
+    # Without the usage frame the separately fitted no-snap set applies:
+    # 0.5 * 9.1 + 0.5 * 7.0 = 8.05.
+    without = build_free_agent_ros_projections(
+        _usage_pool(),
+        USAGE_WEEKS,
+        2025,
+        4,
+        PARAMETERS,
+        prior_season_weeks=pd.DataFrame(),
+        usage_parameters=parameters,
+        scoring_settings=HALF_PPR,
+        usage=None,
+    )
+    assert without.loc[without["player_id"] == "10", "projected_ppg"].iloc[0] == (
+        pytest.approx(8.05)
+    )
+
+
+def test_usage_model_needs_scoring_settings() -> None:
+    result = build_free_agent_ros_projections(
+        _usage_pool(),
+        USAGE_WEEKS,
+        2025,
+        4,
+        PARAMETERS,
+        prior_season_weeks=pd.DataFrame(),
+        usage_parameters=_usage_parameters(),
+    )
+    wa = result.loc[result["player_id"] == "10"].iloc[0]
+    assert wa["projected_ppg"] == pytest.approx(7.0)
+    assert wa["projection_model"] == "eb"
+    assert math.isnan(wa["usage_projected_ppg"])
+
+
+def test_kicker_defense_and_extra_pool_columns_are_tolerated() -> None:
+    """A ``build_player_universe``-shaped pool: K keeps EB, DEF has nothing."""
+    result = build_free_agent_ros_projections(
+        _usage_pool(extra_columns=True),
+        USAGE_WEEKS,
+        2025,
+        4,
+        PARAMETERS,
+        prior_season_weeks=pd.DataFrame(),
+        usage_parameters=_usage_parameters(),
+        scoring_settings=HALF_PPR,
+    )
+    assert list(result.columns) == FREE_AGENT_PROJECTION_COLUMNS
+    kicker = result.loc[result["player_id"] == "40"].iloc[0]
+    defense = result.loc[result["player_id"] == "SF"].iloc[0]
+    assert kicker["projection_model"] == "eb"
+    assert math.isnan(kicker["usage_projected_ppg"])
+    assert kicker["projected_ppg"] == pytest.approx(kicker["eb_projected_ppg"])
+    assert defense["projection_model"] is None
+    assert math.isnan(defense["projected_ppg"])
+
+
+def test_absent_prior_uses_the_fitted_line_and_players_tie() -> None:
+    """FFA-104 with a usage model: the absent line, scored in this league.
+
+    ``2 targets, 1 catch, 10 yards`` -> 0.5 + 1.0 = 1.5 half-PPR points for
+    both absent WRs -- identical, so they share a ``waiver_rank`` (standard
+    competition ranking) below WR A, who has real evidence.
+    """
+    ranked = build_waiver_wire_rankings(
+        _usage_pool(),
+        USAGE_WEEKS,
+        2025,
+        4,
+        ["WR", "WR", "BN"],
+        2,
+        PARAMETERS,
+        prior_season_weeks=pd.DataFrame(),
+        usage_parameters=_usage_parameters(),
+        scoring_settings=HALF_PPR,
+    )
+    by_id = ranked.set_index("player_id")
+    for player_id in ("30", "31"):
+        assert by_id.loc[player_id, "projected_ppg"] == pytest.approx(1.5)
+        assert by_id.loc[player_id, "eb_projected_ppg"] == pytest.approx(1.5)
+        assert by_id.loc[player_id, "projection_model"] == "absent_prior"
+    assert by_id.loc["30", "waiver_rank"] == by_id.loc["31", "waiver_rank"]
+    assert by_id.loc["10", "waiver_rank"] < by_id.loc["30", "waiver_rank"]
+
+
+def test_absent_prior_players_tie_below_players_with_evidence() -> None:
+    """FFA-104 without a usage model: ratio * positional mean, tied.
+
+    Before FFA-104 both absent WRs inherited WR A's 7.0 and tied him for
+    rank 1. Now both get 0.41 * 7.0 = 2.87 and tie each other, below him.
+    """
+    ranked = build_waiver_wire_rankings(
+        _usage_pool(),
+        USAGE_WEEKS,
+        2025,
+        4,
+        ["WR", "WR", "BN"],
+        2,
+        PARAMETERS,
+        prior_season_weeks=pd.DataFrame(),
+    )
+    by_id = ranked.set_index("player_id")
+    assert by_id.loc["30", "projected_ppg"] == pytest.approx(0.41 * 7.0)
+    assert by_id.loc["31", "projected_ppg"] == pytest.approx(0.41 * 7.0)
+    assert by_id.loc["30", "waiver_rank"] == by_id.loc["31", "waiver_rank"]
+    assert by_id.loc["10", "waiver_rank"] == pytest.approx(1.0)
+    assert by_id.loc["30", "waiver_rank"] > 1.0
+    assert by_id.loc["30", "projection_model"] == "absent_prior"
+
+
+def test_model_explanation_columns_are_in_both_schemas() -> None:
+    assert set(MODEL_EXPLANATION_COLUMNS) <= set(FREE_AGENT_PROJECTION_COLUMNS)
+    assert set(MODEL_EXPLANATION_COLUMNS) <= set(WAIVER_WIRE_RANKING_COLUMNS)
+    empty = build_free_agent_ros_projections(
+        _free_agent_pool([]), SCORED_WEEKS, 2025, 4, PARAMETERS
+    )
+    assert empty["projection_model"].dtype == object
+    assert empty["usage_projected_ppg"].dtype == "float64"

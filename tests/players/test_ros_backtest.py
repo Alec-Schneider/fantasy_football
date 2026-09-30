@@ -602,3 +602,35 @@ def test_carried_opportunity_columns_cover_the_provider_contract() -> None:
         f"{sorted(missing)} are in the provider's OPPORTUNITY_COLUMNS but "
         "are not carried through build_scored_player_weeks"
     )
+
+
+def test_raw_offensive_stats_are_carried_for_the_usage_model() -> None:
+    """FFA-111: the usage model rebuilds points from these raw counts."""
+    from fantasy_analyzer.players.ros_backtest import CARRIED_STAT_COLUMNS
+
+    raw = pd.DataFrame(
+        [
+            {
+                "season": 2025,
+                "week": 1,
+                "season_type": "REG",
+                "player_id": "00-0036900",
+                "player_display_name": "Receiver",
+                "position": "WR",
+                "targets": 9,
+                "receptions": 6,
+                "receiving_yards": 71,
+                "receiving_tds": 1,
+                "rushing_fumbles_lost": 1,
+            }
+        ]
+    )
+    scored = build_scored_player_weeks([raw], {"rec": 1.0, "rec_yd": 0.1})
+    row = scored.iloc[0]
+    assert row["receptions"] == 6
+    assert row["receiving_yards"] == 71
+    assert row["receiving_tds"] == 1
+    assert row["rushing_fumbles_lost"] == 1
+    # Absent stat columns are not invented.
+    assert "passing_yards" not in scored.columns
+    assert {"receptions", "receiving_yards", "attempts"} <= set(CARRIED_STAT_COLUMNS)

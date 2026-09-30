@@ -1,10 +1,29 @@
 """Player providers, nflverse integration, fantasy scoring, and roster efficiency."""
 
+from fantasy_analyzer.players.availability import (
+    AVAILABILITY_COLUMNS,
+    DEFAULT_INJURY_WEEKS_OUT,
+    LONG_TERM_INJURY_STATUSES,
+    UNAVAILABLE_INJURY_STATUSES,
+    add_availability,
+    injury_weeks_out,
+    is_available,
+    unavailable_weeks,
+)
+from fantasy_analyzer.players.coverage import (
+    COVERAGE_REASONS,
+    FORWARD_AUDIT_COLUMNS,
+    REVERSE_AUDIT_COLUMNS,
+    build_forward_coverage_audit,
+    build_reverse_coverage_audit,
+)
 from fantasy_analyzer.players.crosswalk import (
     CROSSWALK_COLUMNS,
     build_id_crosswalk,
     build_id_crosswalk_from_player_ids,
+    build_name_match_crosswalk,
     build_robust_id_crosswalk,
+    extend_crosswalk_with_name_matches,
     gsis_to_sleeper_lookup,
     sleeper_to_gsis_lookup,
 )
@@ -74,9 +93,14 @@ from fantasy_analyzer.players.draft_report import (
 from fantasy_analyzer.players.free_agents import (
     DEFAULT_EXCLUDED_STATUSES,
     FREE_AGENT_POOL_COLUMNS,
+    PLAYER_UNIVERSE_COLUMNS,
     build_fantasypros_ownership_lookup,
     build_free_agent_pool,
+    build_player_universe,
+    catalog_display_name,
+    has_nfl_team,
     resolve_startable_positions,
+    roster_id_by_player,
     rostered_player_ids,
 )
 from fantasy_analyzer.players.id_crosswalk_cache import (
@@ -88,6 +112,14 @@ from fantasy_analyzer.players.id_crosswalk_cache import (
     refresh_player_ids_cache,
 )
 from fantasy_analyzer.players.id_crosswalk_client import PlayerIdCrosswalkClient
+from fantasy_analyzer.players.kicker_defense import (
+    DEFAULT_KICKER_DEFENSE_PARAMETERS,
+    KICKER_DEFENSE_PROJECTION_COLUMNS,
+    KickerDefenseParameters,
+    build_kicker_defense_projections,
+    fit_kicker_defense_parameters,
+    run_kicker_defense_backtest,
+)
 from fantasy_analyzer.players.lineup_efficiency import (
     LINEUP_EFFICIENCY_COLUMNS,
     ROSTER_EFFICIENCY_COLUMNS,
@@ -129,6 +161,7 @@ from fantasy_analyzer.players.nflverse_defense import (
     TEAM_DEFENSE_RAW_STAT_COLUMNS,
     NflverseTeamDefenseProvider,
     build_team_defense_stats,
+    build_team_defense_weeks,
 )
 from fantasy_analyzer.players.nflverse_provider import (
     OPPORTUNITY_COLUMNS,
@@ -153,6 +186,7 @@ from fantasy_analyzer.players.opponent_strength import (
     add_matchup_context,
     build_defense_vs_position,
     bye_weeks,
+    completed_nfl_weeks,
     normalize_schedule,
     normalize_team,
 )
@@ -239,17 +273,29 @@ from fantasy_analyzer.players.ros_projection import (
 from fantasy_analyzer.players.roster_fit import (
     ADD_DROP_COLUMNS,
     DROP_CANDIDATE_COLUMNS,
+    POSITION_ALIASES,
     LineupSolution,
+    assign_lineup_slots,
     build_add_drop_candidates,
     build_drop_candidates,
     build_roster_projection_frame,
+    open_roster_spots,
     optimal_lineup,
     starting_slots,
 )
 from fantasy_analyzer.players.scoring import (
+    PREFERRED_TOTAL_COLUMNS,
     SCORING_KEY_TO_STAT_COLUMNS,
     ScoringResult,
     calculate_fantasy_points,
+    calculate_team_defense_points,
+    points_allowed_tier,
+)
+from fantasy_analyzer.players.usage import (
+    EXPECTED_POINTS_COLUMNS,
+    USAGE_IDENTITY_COLUMNS,
+    attach_usage,
+    load_usage_player_weeks,
 )
 from fantasy_analyzer.players.waiver_rankings import (
     CONFIDENCE_TIER_LOW_MAX_GAMES,
@@ -452,4 +498,42 @@ __all__ = [
     "build_free_agent_ros_projections",
     "build_waiver_wire_rankings",
     "build_projection_performance_frame",
+    "build_name_match_crosswalk",
+    "extend_crosswalk_with_name_matches",
+    "PLAYER_UNIVERSE_COLUMNS",
+    "build_player_universe",
+    "catalog_display_name",
+    "has_nfl_team",
+    "roster_id_by_player",
+    "build_team_defense_weeks",
+    "completed_nfl_weeks",
+    "POSITION_ALIASES",
+    "assign_lineup_slots",
+    "open_roster_spots",
+    "PREFERRED_TOTAL_COLUMNS",
+    "calculate_team_defense_points",
+    "points_allowed_tier",
+    "AVAILABILITY_COLUMNS",
+    "DEFAULT_INJURY_WEEKS_OUT",
+    "LONG_TERM_INJURY_STATUSES",
+    "UNAVAILABLE_INJURY_STATUSES",
+    "add_availability",
+    "injury_weeks_out",
+    "is_available",
+    "unavailable_weeks",
+    "COVERAGE_REASONS",
+    "FORWARD_AUDIT_COLUMNS",
+    "REVERSE_AUDIT_COLUMNS",
+    "build_forward_coverage_audit",
+    "build_reverse_coverage_audit",
+    "DEFAULT_KICKER_DEFENSE_PARAMETERS",
+    "KICKER_DEFENSE_PROJECTION_COLUMNS",
+    "KickerDefenseParameters",
+    "build_kicker_defense_projections",
+    "fit_kicker_defense_parameters",
+    "run_kicker_defense_backtest",
+    "EXPECTED_POINTS_COLUMNS",
+    "USAGE_IDENTITY_COLUMNS",
+    "attach_usage",
+    "load_usage_player_weeks",
 ]

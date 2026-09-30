@@ -68,8 +68,13 @@ Additional stat columns
 Beyond the required identity prefix, this provider passes through a fixed,
 documented subset of nflverse's raw per-stat columns (see
 :data:`RAW_STAT_COLUMNS`): basic passing/rushing/receiving counting stats,
-two-point conversions, and kicking stats (field-goal-distance bands and
-extra points) likely to matter for a league's scoring rules. Deliberately
+two-point conversions, kicking stats (field-goal-distance bands, extra
+points, and blocked kicks, which nflverse's ``fg_missed``/``pat_missed``
+exclude), return and fumble-recovery touchdowns, and ``fumbles_lost_total``
+-- every column a key in
+:data:`~fantasy_analyzer.players.scoring.SCORING_KEY_TO_STAT_COLUMNS` or
+:data:`~fantasy_analyzer.players.scoring.PREFERRED_TOTAL_COLUMNS` reads, so
+this path scores exactly as the raw-table path does. Deliberately
 excluded: nflverse's own ``fantasy_points``/``fantasy_points_ppr`` columns
 (computing fantasy points from a league's actual scoring settings is
 FFA-063's job, not this provider's), and ``dakota``, which is a
@@ -187,6 +192,12 @@ RAW_STAT_COLUMNS = [
     "fg_missed",
     "pat_made",
     "pat_missed",
+    "fg_made",
+    "fg_blocked",
+    "pat_blocked",
+    "special_teams_tds",
+    "fumble_recovery_tds",
+    "fumbles_lost_total",
 ]
 
 #: Raw nflverse *opportunity* and efficiency-rate columns passed through

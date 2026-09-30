@@ -17,8 +17,11 @@ import pytest
 from fantasy_analyzer.players.provider import PLAYER_WEEK_IDENTITY_COLUMNS
 from fantasy_analyzer.players.scoring import (
     SCORING_KEY_TO_STAT_COLUMNS,
+    TEAM_DEFENSE_KEY_TO_STAT_COLUMNS,
     ScoringResult,
     calculate_fantasy_points,
+    calculate_team_defense_points,
+    points_allowed_tier,
 )
 
 #: The real scoring_settings block from tests/fixtures/sleeper/league.json,
@@ -324,3 +327,278 @@ def test_result_is_a_scoring_result_preserving_original_columns() -> None:
         assert column in result.points_df.columns
     assert list(result.points_df.columns[: len(stats.columns)]) == list(stats.columns)
     assert list(result.points_df.columns)[-1] == "fantasy_points"
+
+
+# -------------------------
+# FFA-112: mappings verified against Sleeper's own players_points
+# -------------------------
+
+
+@pytest.mark.parametrize(
+    ("stat_column", "scoring_key", "weight"),
+    [
+        ("fg_made_50_59", "fgm_50_59", 5),
+        ("fg_made_60_", "fgm_60p", 6),
+        ("fg_made", "fgm", 3),
+        ("special_teams_tds", "st_td", 6),
+        ("fumble_recovery_tds", "fum_rec_td", 6),
+    ],
+)
+def test_ffa112_single_column_keys(
+    stat_column: str, scoring_key: str, weight: float
+) -> None:
+    """Keys added by FFA-112: 2 events * weight, no other key contributing."""
+    stats = pd.DataFrame([_stat_row(**{stat_column: 2})])
+
+    result = calculate_fantasy_points(stats, {scoring_key: weight})
+
+    assert result.unsupported_scoring_keys == []
+    assert result.points_df.loc[0, "fantasy_points"] == pytest.approx(2 * weight)
+
+
+def test_split_long_field_goal_bands_score_each_band_separately() -> None:
+    """A league scoring 50-59 at 5 and 60+ at 6 (Zipline's settings).
+
+    One 55-yarder (5) + one 61-yarder (6) = 11.0. Before FFA-112 both keys
+    were unmapped and this kicker scored 0.0 for them.
+    """
+    stats = pd.DataFrame([_stat_row(fg_made_50_59=1, fg_made_60_=1)])
+
+    result = calculate_fantasy_points(stats, {"fgm_50_59": 5, "fgm_60p": 6})
+
+    assert result.points_df.loc[0, "fantasy_points"] == pytest.approx(11.0)
+
+
+def test_blocked_kicks_count_as_misses() -> None:
+    """Sleeper charges a blocked FG to fgmiss and a blocked PAT to xpmiss.
+
+    fg_missed=1 + fg_blocked=1 -> 2 misses * -1 = -2.0
+    pat_missed=0 + pat_blocked=1 -> 1 miss * -1 = -1.0
+    Total -3.0.
+    """
+    stats = pd.DataFrame([_stat_row(fg_missed=1, fg_blocked=1, pat_blocked=1)])
+
+    result = calculate_fantasy_points(stats, {"fgmiss": -1, "xpmiss": -1})
+
+    assert result.points_df.loc[0, "fantasy_points"] == pytest.approx(-3.0)
+
+
+def test_blocked_kick_columns_absent_keeps_the_old_behavior() -> None:
+    """A provider frame without fg_blocked/pat_blocked scores as before."""
+    stats = pd.DataFrame([_stat_row(fg_missed=2, pat_missed=1)])
+    assert "fg_blocked" not in stats.columns
+
+    result = calculate_fantasy_points(stats, {"fgmiss": -1, "xpmiss": -1})
+
+    assert result.points_df.loc[0, "fantasy_points"] == pytest.approx(-3.0)
+
+
+def test_fum_lost_prefers_fumbles_lost_total_when_present() -> None:
+    """A muffed punt is in fumbles_lost_total but in no scrimmage column.
+
+    Scrimmage columns sum to 1; the total is 2 -> 2 * -2 = -4.0.
+    """
+    stats = pd.DataFrame([_stat_row(rushing_fumbles_lost=1, fumbles_lost_total=2)])
+
+    result = calculate_fantasy_points(stats, {"fum_lost": -2})
+
+    assert result.points_df.loc[0, "fantasy_points"] == pytest.approx(-4.0)
+
+
+def test_fum_lost_falls_back_to_component_sum_row_by_row() -> None:
+    """A NaN total on one row falls back to that row's component sum."""
+    stats = pd.DataFrame(
+        [
+            _stat_row(sack_fumbles_lost=1, rushing_fumbles_lost=1),
+            _stat_row(receiving_fumbles_lost=1, fumbles_lost_total=3),
+        ]
+    )
+    stats.loc[0, "fumbles_lost_total"] = float("nan")
+
+    result = calculate_fantasy_points(stats, {"fum_lost": -1})
+
+    assert list(result.points_df["fantasy_points"]) == pytest.approx([-2.0, -3.0])
+
+
+@pytest.mark.parametrize(
+    ("rushing_yards", "expected"),
+    [(199, 0.0), (200, 2.0), (251, 2.0)],
+)
+def test_threshold_bonus_is_paid_once_at_the_threshold(
+    rushing_yards: int, expected: float
+) -> None:
+    """bonus_rush_yd_200: a step, not a rate -- paid once at >= 200 yards."""
+    stats = pd.DataFrame([_stat_row(rushing_yards=rushing_yards)])
+
+    result = calculate_fantasy_points(stats, {"bonus_rush_yd_200": 2})
+
+    assert result.unsupported_scoring_keys == []
+    assert result.points_df.loc[0, "fantasy_points"] == pytest.approx(expected)
+
+
+def test_threshold_bonus_on_missing_stat_is_not_paid() -> None:
+    stats = pd.DataFrame([_stat_row()])
+    stats.loc[0, "passing_yards"] = float("nan")
+
+    result = calculate_fantasy_points(stats, {"bonus_pass_yd_400": 2})
+
+    assert result.points_df.loc[0, "fantasy_points"] == 0.0
+
+
+def test_unverified_bonus_keys_stay_unsupported() -> None:
+    """Touchdown-length and banded yardage bonuses are surfaced, not guessed."""
+    stats = pd.DataFrame([_stat_row(rushing_yards=150)])
+
+    result = calculate_fantasy_points(
+        stats, {"rush_td_50p": 1, "bonus_rush_yd_100": 1, "bonus_rec_te": 0.5}
+    )
+
+    assert result.unsupported_scoring_keys == [
+        "bonus_rec_te",
+        "bonus_rush_yd_100",
+        "rush_td_50p",
+    ]
+    assert result.points_df.loc[0, "fantasy_points"] == 0.0
+
+
+# -------------------------
+# FFA-112: team DEF scoring
+# -------------------------
+
+#: The three leagues' DEF settings share these values (NWC zeroes ff,
+#: def_st_ff and blk_kick; the other two weight them 1/1/2).
+DEF_SETTINGS = {
+    "sack": 1,
+    "int": 2,
+    "fum_rec": 2,
+    "def_st_fum_rec": 1,
+    "ff": 1,
+    "def_st_ff": 1,
+    "def_td": 6,
+    "def_st_td": 6,
+    "safe": 2,
+    "blk_kick": 2,
+    "st_td": 6,
+    "st_ff": 1,
+    "st_fum_rec": 1,
+    "pts_allow_0": 10,
+    "pts_allow_1_6": 7,
+    "pts_allow_7_13": 4,
+    "pts_allow_14_20": 1,
+    "pts_allow_21_27": 0,
+    "pts_allow_28_34": -1,
+    "pts_allow_35p": -4,
+    "pass_yd": 0.04,
+    "rec": 0.5,
+}
+
+
+def _defense_row(**overrides: float) -> dict:
+    row = {
+        column: 0.0
+        for columns in TEAM_DEFENSE_KEY_TO_STAT_COLUMNS.values()
+        for column in columns
+    }
+    row["def_points_allowed"] = 21.0
+    row.update(overrides)
+    return row
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        ("pts_allow_0", (0.0, 0.0)),
+        ("pts_allow_7_13", (7.0, 13.0)),
+        ("pts_allow_35p", (35.0, math.inf)),
+        ("pts_allow", None),
+        ("yds_allow_0_100", None),
+    ],
+)
+def test_points_allowed_tier_parsing(key: str, expected: object) -> None:
+    assert points_allowed_tier(key) == expected
+
+
+def test_team_defense_toy_example_matches_hand_computed_total() -> None:
+    """3 sacks (3) + 1 INT (2) + 1 scrimmage recovery (2) + 1 ST recovery (1)
+    + 2 forced fumbles (2) + 1 defensive TD (6) + 1 blocked kick (2)
+    + 10 points allowed -> the 7-13 tier (4) = 22.0.
+
+    The st_* keys in the settings pay individual players, never the DEF.
+    """
+    frame = pd.DataFrame(
+        [
+            _defense_row(
+                sacks=3,
+                interceptions=1,
+                fumble_recoveries=1,
+                st_fumble_recoveries=1,
+                forced_fumbles=2,
+                def_tds=1,
+                blocked_kicks=1,
+                def_points_allowed=10,
+            )
+        ]
+    )
+
+    result = calculate_team_defense_points(frame, DEF_SETTINGS)
+
+    assert result.points_df.loc[0, "fantasy_points"] == pytest.approx(22.0)
+    assert result.unsupported_scoring_keys == []
+
+
+@pytest.mark.parametrize(
+    ("allowed", "expected"),
+    [
+        (0, 10.0),
+        (1, 7.0),
+        (6, 7.0),
+        (7, 4.0),
+        (13, 4.0),
+        (14, 1.0),
+        (20, 1.0),
+        (21, 0.0),
+        (27, 0.0),
+        (28, -1.0),
+        (34, -1.0),
+        (35, -4.0),
+        (52, -4.0),
+    ],
+)
+def test_points_allowed_tier_boundaries_are_inclusive(
+    allowed: int, expected: float
+) -> None:
+    frame = pd.DataFrame([_defense_row(def_points_allowed=allowed)])
+
+    result = calculate_team_defense_points(frame, DEF_SETTINGS)
+
+    assert result.points_df.loc[0, "fantasy_points"] == pytest.approx(expected)
+
+
+def test_team_defense_missing_points_allowed_falls_in_no_tier() -> None:
+    frame = pd.DataFrame([_defense_row(sacks=2, def_points_allowed=float("nan"))])
+
+    result = calculate_team_defense_points(frame, DEF_SETTINGS)
+
+    assert result.points_df.loc[0, "fantasy_points"] == pytest.approx(2.0)
+
+
+def test_team_defense_reports_only_defense_family_gaps() -> None:
+    """yds_allow_* and def_2pt are DEF keys this engine cannot score;
+    pass_yd/rec are player keys and simply do not apply to a DEF row."""
+    frame = pd.DataFrame([_defense_row()])
+
+    result = calculate_team_defense_points(
+        frame, {**DEF_SETTINGS, "yds_allow_0_100": 5, "def_2pt": 2}
+    )
+
+    assert result.unsupported_scoring_keys == ["def_2pt", "yds_allow_0_100"]
+
+
+def test_identical_defense_rows_tie_exactly() -> None:
+    frame = pd.DataFrame([_defense_row(sacks=4), _defense_row(sacks=4)])
+
+    points = calculate_team_defense_points(frame, DEF_SETTINGS).points_df[
+        "fantasy_points"
+    ]
+
+    assert points.iloc[0] == points.iloc[1]
