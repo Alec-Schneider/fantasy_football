@@ -505,6 +505,32 @@
   .pill.out { background: var(--neg-soft); color: var(--neg); }
   .pill.q { background: var(--surface-3); color: var(--brass); }
   .pill.bye { background: var(--surface-3); color: var(--muted); }
+  .pill.ir { background: var(--surface-3); color: var(--ink-2); }
+  .pill.hot { background: var(--surface-3); color: var(--brass); }
+  .pill.cold { background: var(--pos-soft); color: var(--pos); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+
+  .chips button {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 4px 11px;
+    cursor: pointer;
+  }
+
+  .chips button:hover { color: var(--ink); }
+
+  .chips button[aria-pressed="true"] {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-ink);
+  }
 
   /* ---------- lineup ---------- */
 
@@ -548,6 +574,7 @@
 
   .slot.swap { background: var(--pos-soft); }
   .slot.drop-out { background: var(--neg-soft); }
+  .slot.empty-slot .nm { color: var(--muted); font-style: italic; }
 
   .moves { display: flex; flex-direction: column; }
 
@@ -565,6 +592,8 @@
   .move .txt em { font-style: normal; color: var(--muted); }
   .move .gain { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--pos); font-variant-numeric: tabular-nums; }
   .move .gain.flat { color: var(--muted); }
+  .move .gain small { display: block; font-size: 10px; font-weight: 400; color: var(--muted); text-align: right; }
+  .move .detail { display: block; font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 2px; }
 
   /* ---------- notes ---------- */
 
@@ -672,13 +701,14 @@
       <div class="panel" id="lineup"></div>
     </section>
     <section>
-      <h3>Best available moves</h3>
+      <h3>Best available moves <span class="sub" id="movessub"></span></h3>
       <div class="panel moves" id="moves"></div>
     </section>
   </div>
 
   <section>
     <h3>Waiver board <span class="sub">free agents by projected rest-of-season value</span></h3>
+    <div class="chips" id="wpos" role="group" aria-label="Position"></div>
     <div class="panel scroll"><table id="waivers"></table></div>
   </section>
 
@@ -724,6 +754,83 @@
   function label(team) {
     return team.team_name || team.display_name || ("Roster " + team.roster_id);
   }
+
+  function has(v) {
+    return v !== null && v !== undefined && !(typeof v === "number" && isNaN(v));
+  }
+
+  // Team defenses are keyed by team code and may carry no name.
+  function playerName(p) {
+    if (p.full_name) { return p.full_name; }
+    if (p.position === "DEF") { return (p.team || p.player_id) + " D/ST"; }
+    return p.player_id || "—";
+  }
+
+  // Shares arrive as fractions (0.78); tolerate a percentage (78) too.
+  function share(v) {
+    if (!has(v)) { return null; }
+    var x = Number(v);
+    return Math.abs(x) <= 1.5 ? x * 100 : x;
+  }
+
+  function pct(v) {
+    var x = share(v);
+    return x === null ? "—" : Math.round(x) + "%";
+  }
+
+  // Last-two-games snap share against the season: ±5 points is a trend.
+  function snapTrend(p) {
+    var season = share(p.snap_share);
+    var recent = share(p.snap_share_last2);
+    if (season === null || recent === null) { return ""; }
+    if (recent - season >= 5) { return " ↑"; }
+    if (season - recent >= 5) { return " ↓"; }
+    return "";
+  }
+
+  // Points over expected per game: a big plus is production the usage
+  // does not support -- usually touchdowns.
+  var LUCK_THRESHOLD = 3.0;
+
+  function luckPill(p) {
+    var poe = p.points_over_expected_per_game;
+    if (!has(poe)) { return null; }
+    if (poe >= LUCK_THRESHOLD) { return el("span", "pill hot", "TD-luck " + signed(poe, 1)); }
+    if (poe <= -LUCK_THRESHOLD) { return el("span", "pill cold", "under exp " + signed(poe, 1)); }
+    return null;
+  }
+
+  function usageLine(p) {
+    var bits = [];
+    if (has(p.snap_share)) { bits.push("snap " + pct(p.snap_share) + snapTrend(p)); }
+    if (has(p.target_share) && /^(RB|WR|TE)$/.test(p.position)) { bits.push("tgt " + pct(p.target_share)); }
+    if (has(p.xfp_per_game)) { bits.push("xFP " + num(p.xfp_per_game, 1)); }
+    return bits.join(" · ");
+  }
+
+  function modelTitle(p) {
+    var bits = [];
+    if (p.projection_model) { bits.push("model: " + p.projection_model); }
+    if (has(p.usage_projected_ppg)) { bits.push("usage " + num(p.usage_projected_ppg, 1)); }
+    if (has(p.eb_projected_ppg)) { bits.push("history " + num(p.eb_projected_ppg, 1)); }
+    return bits.join(" · ");
+  }
+
+  // The lineup is solved on this week's number: K/DEF carry a
+  // market-adjusted weekly projection, everyone else their per-game rate.
+  function weekPoints(p) {
+    return has(p.lineup_ppg) ? p.lineup_ppg : p.projected_ppg;
+  }
+
+  function isKdef(p) {
+    return p.projection_source === "kicker_defense" || p.position === "K" || p.position === "DEF";
+  }
+
+  function hasUsage(rows) {
+    return rows.some(function (r) { return has(r.snap_share) || has(r.xfp_per_game); });
+  }
+
+  var posFilter = "ALL";
 
   // ---- control bar -------------------------------------------------
 
@@ -919,13 +1026,21 @@
     return el("span", cls, s);
   }
 
+  function addPill(parent, pill) {
+    if (!pill) { return; }
+    parent.appendChild(document.createTextNode(" "));
+    parent.appendChild(pill);
+  }
+
   function renderLineup(lg) {
     var host = document.getElementById("lineup");
     var sub = document.getElementById("lineupsub");
     host.innerHTML = "";
     var ln = lg.lineup;
+    var starters = (ln && ln.recommended_starters) || [];
+    var order = (ln && ln.slot_order) || [];
 
-    if (!ln || !ln.recommended_starters.length) {
+    if (!ln || (!starters.length && !order.length)) {
       sub.textContent = "";
       host.appendChild(el("div", "empty", "No projection available for this roster."));
       return;
@@ -933,21 +1048,44 @@
 
     sub.textContent = "week " + lg.upcoming_week + " · " + num(ln.projected_points, 1) + " projected";
 
-    ln.recommended_starters.forEach(function (p) {
-      var row = el("div", "slot" + (p.currently_starting ? "" : " swap"));
-      row.appendChild(el("span", "pos-tag", p.position));
-      var nm = el("div", "nm");
-      var b = el("b", null, p.full_name);
-      nm.appendChild(b);
-      var pill = injuryPill(p);
-      if (pill) { nm.appendChild(document.createTextNode(" ")); nm.appendChild(pill); }
-      if (!p.currently_starting) {
-        nm.appendChild(document.createTextNode(" "));
-        nm.appendChild(el("span", "pill start", "start"));
+    var byId = {};
+    starters.forEach(function (p) { byId[p.player_id] = p; });
+    if (!order.length) {
+      order = starters.map(function (p) { return { slot: p.slot || p.position, player_id: p.player_id }; });
+    }
+
+    order.forEach(function (s) {
+      var p = s.player_id ? byId[s.player_id] : null;
+      if (!p) {
+        var gap = el("div", "slot empty-slot");
+        gap.appendChild(el("span", "pos-tag", s.slot));
+        gap.appendChild(el("div", "nm", "Empty — no available player for this slot"));
+        gap.appendChild(el("span", "pp", "—"));
+        host.appendChild(gap);
+        return;
       }
-      nm.appendChild(el("span", "meta", (p.team || "FA") + " · " + num(p.ppg_to_date, 1) + " ppg so far"));
+      var row = el("div", "slot" + (p.currently_starting ? "" : " swap"));
+      row.appendChild(el("span", "pos-tag", s.slot || p.position));
+      var nm = el("div", "nm");
+      var b = el("b", null, playerName(p));
+      b.title = modelTitle(p);
+      nm.appendChild(b);
+      addPill(nm, injuryPill(p));
+      addPill(nm, luckPill(p));
+      if (p.projection_missing) { addPill(nm, el("span", "pill bye", "no projection")); }
+      if (!p.currently_starting) { addPill(nm, el("span", "pill start", "start")); }
+      var meta = [(s.slot && s.slot !== p.position ? p.position + " · " : "") + (p.team || "FA")];
+      if (isKdef(p)) {
+        if (p.week_opponent) { meta.push("vs " + p.week_opponent); }
+        meta.push(num(p.projected_ppg, 1) + "/g rest of season");
+      } else {
+        meta.push(num(p.ppg_to_date, 1) + " ppg so far");
+        var usage = usageLine(p);
+        if (usage) { meta.push(usage); }
+      }
+      nm.appendChild(el("span", "meta", meta.join(" · ")));
       row.appendChild(nm);
-      row.appendChild(el("span", "pp", num(p.projected_ppg, 1)));
+      row.appendChild(el("span", "pp", num(weekPoints(p), 1)));
       host.appendChild(row);
     });
 
@@ -955,12 +1093,16 @@
       var row = el("div", "slot drop-out");
       row.appendChild(el("span", "pos-tag", p.position));
       var nm = el("div", "nm");
-      nm.appendChild(el("b", null, p.full_name));
-      nm.appendChild(document.createTextNode(" "));
-      nm.appendChild(el("span", "pill sit", "sit"));
-      nm.appendChild(el("span", "meta", "currently starting · projects below your bench"));
+      nm.appendChild(el("b", null, playerName(p)));
+      if (p.projection_missing) {
+        addPill(nm, el("span", "pill bye", "no projection"));
+        nm.appendChild(el("span", "meta", "currently starting · no projection to compare against your bench"));
+      } else {
+        addPill(nm, el("span", "pill sit", "sit"));
+        nm.appendChild(el("span", "meta", "currently starting · projects below your bench"));
+      }
       row.appendChild(nm);
-      row.appendChild(el("span", "pp", num(p.projected_ppg, 1)));
+      row.appendChild(el("span", "pp", num(weekPoints(p), 1)));
       host.appendChild(row);
     });
 
@@ -968,14 +1110,15 @@
       var row = el("div", "slot drop-out");
       row.appendChild(el("span", "pos-tag", p.position));
       var nm = el("div", "nm");
-      nm.appendChild(el("b", null, p.full_name));
-      var pill = injuryPill(p);
-      if (pill) { nm.appendChild(document.createTextNode(" ")); nm.appendChild(pill); }
-      if (p.currently_starting) {
-        nm.appendChild(document.createTextNode(" "));
-        nm.appendChild(el("span", "pill sit", "in your lineup"));
-      }
-      nm.appendChild(el("span", "meta", "cannot be counted on this week"));
+      nm.appendChild(el("b", null, playerName(p)));
+      addPill(nm, injuryPill(p));
+      if (p.in_reserve) { addPill(nm, el("span", "pill ir", "IR slot")); }
+      if (p.currently_starting) { addPill(nm, el("span", "pill sit", "in your lineup")); }
+      var why = p.on_bye && !p.injury_status
+        ? "on bye in week " + lg.upcoming_week
+        : "cannot be counted on this week";
+      if (p.in_reserve) { why += " · holds no bench spot"; }
+      nm.appendChild(el("span", "meta", why));
       row.appendChild(nm);
       row.appendChild(el("span", "pp", num(p.projected_ppg, 1)));
       host.appendChild(row);
@@ -984,13 +1127,20 @@
 
   function renderMoves(lg) {
     var host = document.getElementById("moves");
+    var sub = document.getElementById("movessub");
     host.innerHTML = "";
-    var moves = ((lg.lineup || {}).add_drop || []).filter(function (m) {
+    var ln = lg.lineup || {};
+    var hz = ln.horizon;
+    sub.textContent = hz
+      ? "weeks " + hz.from_week + (hz.through_week > hz.from_week ? "–" + hz.through_week : "") + " · per-week average"
+      : "";
+
+    var moves = (ln.add_drop || []).filter(function (m) {
       return (m.net_lineup_gain || 0) > 0.01;
     }).slice(0, 8);
 
     if (!moves.length) {
-      host.appendChild(el("div", "empty", "No free agent improves this lineup. Stand pat."));
+      host.appendChild(el("div", "empty", "No free agent improves this lineup over the rest of the regular season. Stand pat."));
       return;
     }
 
@@ -998,52 +1148,107 @@
       var row = el("div", "move");
       row.appendChild(el("span", "n", i + 1));
       var txt = el("div", "txt");
-      txt.appendChild(el("strong", null, m.full_name));
+      txt.appendChild(el("strong", null, playerName(m)));
       txt.appendChild(document.createTextNode(" (" + m.position + (m.team ? " · " + m.team : "") + ")"));
+      addPill(txt, injuryPill(m));
       if (m.best_drop_name) {
-        var e = el("em", null, " — drop " + m.best_drop_name);
-        txt.appendChild(e);
+        txt.appendChild(el("em", null, " — drop " + m.best_drop_name));
+      } else if ((ln.open_roster_spots || 0) > 0) {
+        txt.appendChild(el("em", null, " — into an open roster spot"));
       }
-      if (m.starts_immediately) {
-        txt.appendChild(document.createTextNode(" "));
-        txt.appendChild(el("span", "pill start", "starts"));
+      if (m.starts_immediately) { addPill(txt, el("span", "pill start", "starts")); }
+      if (has(m.weeks_evaluated) && m.weeks_evaluated > 1) {
+        var bits = [signed(m.net_gain_this_week, 1) + " this week",
+                    signed(m.net_lineup_gain_total, 1) + " over " + m.weeks_evaluated + " wks"];
+        if (m.bye_week) { bits.push("bye " + m.bye_week); }
+        txt.appendChild(el("span", "detail", bits.join(" · ")));
       }
       row.appendChild(txt);
-      row.appendChild(el("span", "gain", "+" + num(m.net_lineup_gain, 1)));
+      var gain = el("span", "gain", "+" + num(m.net_lineup_gain, 1));
+      if (has(m.weeks_evaluated) && m.weeks_evaluated > 1) { gain.appendChild(el("small", null, "per wk")); }
+      row.appendChild(gain);
       host.appendChild(row);
     });
   }
 
+  function renderPositionChips(lg, rows) {
+    var host = document.getElementById("wpos");
+    host.innerHTML = "";
+    var order = ["QB", "RB", "WR", "TE", "K", "DEF"];
+    var present = {};
+    rows.forEach(function (r) { present[r.position] = true; });
+    var positions = order.filter(function (p) { return present[p]; });
+    Object.keys(present).forEach(function (p) { if (order.indexOf(p) < 0) { positions.push(p); } });
+    if (posFilter !== "ALL" && !present[posFilter]) { posFilter = "ALL"; }
+    if (positions.length < 2) { return; }
+
+    ["ALL"].concat(positions).forEach(function (p) {
+      var b = el("button", null, p === "ALL" ? "All" : p);
+      b.type = "button";
+      b.setAttribute("aria-pressed", p === posFilter ? "true" : "false");
+      b.addEventListener("click", function () {
+        posFilter = p;
+        renderWaivers(lg);
+      });
+      host.appendChild(b);
+    });
+  }
+
   function renderWaivers(lg) {
-    var rows = (lg.free_agents || {}).rows || [];
-    table(
-      document.getElementById("waivers"),
-      [
-        { t: "#" }, { t: "Player", cls: "l" }, { t: "Pos" }, { t: "NFL" },
-        { t: "Proj/g" }, { t: "ROS value" }, { t: "Opp" }, { t: "Tgt/g" }, { t: "Bye" }, { t: "Confidence" }
-      ],
-      rows,
-      function (r) {
-        var tr = el("tr");
-        tr.appendChild(el("td", "rk", r.board_rank));
-        var nm = el("td", "l");
-        nm.appendChild(document.createTextNode(r.full_name));
-        if (r.injury_status) {
-          nm.appendChild(document.createTextNode(" "));
-          nm.appendChild(injuryPill(r));
-        }
-        tr.appendChild(nm);
-        tr.appendChild(el("td", null, r.position));
-        tr.appendChild(el("td", null, r.team || "—"));
-        tr.appendChild(el("td", null, num(r.projected_ppg, 1)));
-        tr.appendChild(el("td", (r.points_above_replacement || 0) >= 0 ? "pos" : "neg", signed(r.points_above_replacement, 1)));
-        tr.appendChild(el("td", null, r.week_opponent ? (r.week_is_home ? "vs " : "@ ") + r.week_opponent : "bye"));
-        tr.appendChild(el("td", null, r.targets_per_game === null || r.targets_per_game === undefined ? "—" : num(r.targets_per_game, 1)));
-        tr.appendChild(el("td", null, r.bye_week || "—"));
-        tr.appendChild(el("td", null, r.confidence_tier || "—"));
-        return tr;
+    var all = (lg.free_agents || {}).rows || [];
+    renderPositionChips(lg, all);
+    var rows = posFilter === "ALL" ? all : all.filter(function (r) { return r.position === posFilter; });
+    var usage = hasUsage(all);
+
+    var cols = [
+      { t: "#" }, { t: "Player", cls: "l" }, { t: "Pos" }, { t: "NFL" },
+      { t: "Proj/g" }, { t: "ROS value" }, { t: "Opp" }
+    ];
+    if (usage) {
+      cols = cols.concat([{ t: "Snap" }, { t: "Tgt%" }, { t: "xFP/g" }, { t: "vs exp" }]);
+    } else {
+      cols.push({ t: "Tgt/g" });
+    }
+    cols = cols.concat([{ t: "Bye" }, { t: "Confidence" }]);
+
+    table(document.getElementById("waivers"), cols, rows, function (r) {
+      var tr = el("tr");
+      tr.appendChild(el("td", "rk", r.board_rank));
+      var nm = el("td", "l");
+      nm.appendChild(document.createTextNode(playerName(r)));
+      addPill(nm, injuryPill(r));
+      addPill(nm, luckPill(r));
+      tr.appendChild(nm);
+      tr.appendChild(el("td", null, r.position));
+      tr.appendChild(el("td", null, r.team || "—"));
+      var proj = el("td", null, num(r.projected_ppg, 1));
+      proj.title = modelTitle(r);
+      tr.appendChild(proj);
+      tr.appendChild(el("td", (r.points_above_replacement || 0) >= 0 ? "pos" : "neg", signed(r.points_above_replacement, 1)));
+      tr.appendChild(el("td", null, r.week_opponent ? (r.week_is_home ? "vs " : "@ ") + r.week_opponent : (has(r.bye_week) ? "bye" : "—")));
+      if (usage) {
+        tr.appendChild(el("td", null, has(r.snap_share) ? pct(r.snap_share) + snapTrend(r) : "—"));
+        tr.appendChild(el("td", null, /^(RB|WR|TE)$/.test(r.position) ? pct(r.target_share) : "—"));
+        tr.appendChild(el("td", null, num(r.xfp_per_game, 1)));
+        var poe = r.points_over_expected_per_game;
+        tr.appendChild(el("td", has(poe) ? (poe >= 0 ? "pos" : "neg") : null, signed(poe, 1)));
+      } else {
+        tr.appendChild(el("td", null, has(r.targets_per_game) ? num(r.targets_per_game, 1) : "—"));
       }
-    );
+      tr.appendChild(el("td", null, r.bye_week || "—"));
+      tr.appendChild(el("td", null, r.confidence_tier || "—"));
+      return tr;
+    });
+
+    if (!rows.length) {
+      var t = document.getElementById("waivers");
+      var tb = t.querySelector("tbody");
+      var tr = el("tr");
+      var td = el("td", "l", "No free agents to show.");
+      td.colSpan = cols.length;
+      tr.appendChild(td);
+      tb.appendChild(tr);
+    }
   }
 
   function renderNotes(lg) {
@@ -1052,16 +1257,40 @@
     var fa = lg.free_agents || {};
     var ln = lg.lineup || {};
 
+    var hz = ln.horizon;
+    var excluded = ln.excluded_positions || [];
+    var availability = "Out and Doubtful players miss this week only; IR, PUP, NA and suspended players are assumed out four weeks — the NFL minimum, so a lower bound. Byes come from the NFL schedule. Nobody unavailable is started, and Questionable players start but are flagged.";
+    if (hz) {
+      availability += " Moves are scored over weeks " + hz.from_week + "–" + hz.through_week + " with each player's week-by-week availability, so nobody is offered as a drop just for being hurt or on bye this week. IR-slot players are never the drop, and a kicker or defense move is a swap for the one you have. A slot nobody on your roster can fill that week is scored at the position's replacement level — what you could stream — so a backup counts only for his margin over a streamer.";
+    }
+    if (excluded.length) {
+      availability += " No projection exists yet for " + excluded.join(", ") + ", so those slots are left out of the lineup and the moves rather than scored at zero.";
+    }
+
+    var blended = (fa.rows || []).some(function (r) { return r.projection_model === "blend"; });
+    var projection = blended
+      ? "Rest-of-season points per game for QB, RB, WR and TE blend two models: a usage model (snaps, targets, carries and pass attempts, turned into points with this league's scoring) and the player's own scoring history, shrunk toward a fitted per-position prior. The blend beat history alone at every position in a backtest over seven seasons."
+      : "Rest-of-season points per game, shrunk toward a fitted per-position prior.";
+
     var notes = [
       ["How the board is built",
-       "Rest-of-season points per game, shrunk toward a fitted per-position prior, then measured against the last startable player at that position across the whole league — not just the wire. Ranked on rest-of-season points above replacement, through week " + fa.cutoff_week + "."],
+       projection + " Each player is then measured against the last startable player at his position across the whole league — not just the wire. Ranked on rest-of-season points above replacement, through week " + fa.cutoff_week + "."],
       ["Power score",
        "Equal-weighted z-scores of win percentage, all-play win percentage and mean points, over regular-season games only, recomputed from scratch for each week you select."],
-      ["What the lineup ignores",
-       "Kickers and defenses (" + (ln.excluded_positions || []).join(", ") + ") have no weekly stat rows in the source data, so they carry no projection and are left out of both the lineup and the add/drop search. Players who are Out, on IR, or on bye are excluded from the recommended lineup."],
-      ["Who is filtered off the board",
-       "Free agents with no NFL team, and those with neither four prior-season games nor a snap this season. Both would otherwise rank on a positional average rather than evidence."]
+      ["Who can play", availability],
+      ["Who is on the board",
+       "Free agents with no NFL team never enter the pool. A player with no games this season and fewer than four prior-season games stays on, projected at what players in that spot have historically gone on to score — roughly half the positional average — so he ranks well below the wire's real options."]
     ];
+    var kdefShown = (fa.rows || []).some(isKdef) ||
+      (ln.recommended_starters || []).some(isKdef);
+    if (kdefShown) {
+      notes.push(["Kickers and defenses",
+        "Projected by their own model, fitted on ten seasons of this league's scoring: each player's season is shrunk hard toward the positional average, because this early there is little to separate one kicker from another. The lineup uses this week's number, nudged by the betting market's implied points; the board and the moves use the rest-of-season rate, against the league's last starting kicker or defense."]);
+    }
+    if (hasUsage(fa.rows || [])) {
+      notes.push(["Reading the usage columns",
+        "Snap: share of offensive snaps this season; the arrow compares the last two games (±5 points). Tgt%: share of team targets. xFP/g: points the player's usage would score for an average player. vs exp: actual minus expected per game — a large plus (flagged TD-luck at +" + LUCK_THRESHOLD.toFixed(1) + ") is production the usage does not support, usually touchdowns. Hover a projection for the model behind it."]);
+    }
 
     notes.forEach(function (n) {
       var d = el("div", "note");
