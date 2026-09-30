@@ -21,6 +21,37 @@ The initial development and validation season is **2025**, using the Sleeper
 username `schneidbaby` as the primary development account. The application is
 built to support arbitrary Sleeper users and leagues.
 
+## Season dashboard
+
+The package's pipelines come together in one static page covering every
+league a manager plays in: what happened each week, and what to do about the
+week coming up. See [`docs/dashboard.md`](docs/dashboard.md) for how it is
+built and refreshed.
+
+**Weekly results and recap.** A league and week picker, the manager's
+season at a glance, every matchup's score, and a written recap of the week
+in which every figure can be traced back to the data.
+
+![Week scoreboard and recap](docs/images/dashboard-week.png)
+
+**Standings and power rankings.** Both are recomputed as of the selected
+week, so any earlier week shows the table as it stood then. Power
+rankings blend record, all-play win rate and scoring.
+
+![Standings and power rankings](docs/images/dashboard-standings.png)
+
+**Lineup call and best moves.** The recommended starting lineup for the
+coming week, which accounts for injuries and byes, alongside the add/drop
+moves that most improve the roster over the rest of the regular season.
+
+![Recommended lineup and moves](docs/images/dashboard-lineup.png)
+
+**Waiver board.** Every free agent ranked by projected rest-of-season value
+over replacement. It uses the league's own scoring settings and shows usage
+context: snap share, target share and expected points.
+
+![Waiver board](docs/images/dashboard-waivers.png)
+
 ## Project layout
 
 ```text
@@ -89,7 +120,7 @@ fantasy-analyzer commentary recap <league_id> --week 3 --total-weeks 18 --genera
 
 # Rank a league's free agents by projected rest-of-season points above
 # replacement, as of after week 3. See docs/free-agents-cli.md for the full
-# argument reference and a caveat on the shrinkage projection this uses.
+# argument reference and the local caches the projection model reads.
 fantasy-analyzer free-agents <league_id> --season 2026 --week 3
 
 # ...filter to one position, limit to the top N, or print JSON instead.

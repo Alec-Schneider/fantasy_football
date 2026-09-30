@@ -1499,3 +1499,89 @@ was found by observing two players with `injury_status: "Out"` placed in a
 recommended starting lineup.
 
 See `docs/dashboard.md` for the refresh workflow and published URL.
+
+### FFA-111 — Opportunity-First Rest-of-Season Projection
+**Owner:** Data Scientist
+**Depends on:** FFA-090 (EB projection), FFA-092 (waiver rankings), FFA-110
+(snap-count and expected-points caches)
+
+`players/usage_projection.py` projects QB/RB/WR/TE from opportunity rather
+than points. It shrinks volume (pass attempts, carries, targets) with a
+recent-games weight, prior-season games and a snap-share term. It shrinks
+efficiency, TD and turnover rates per opportunity with a pseudo-count fitted
+per rate and position. The projected stat line is scored with the league's
+own settings through `scoring.calculate_fantasy_points`. The final
+`projected_ppg` is `a * usage + (1 - a) * eb`, with `a` fitted per position
+by minimum MAE (0.65–0.80 with snaps, 0.60–0.70 without). Constants are
+persisted by `scripts/fit_usage_model.py` to
+`.cache/nflverse/usage_model_parameters.json`.
+
+**Measured** (rolling origin, 2019–2025 scored with constants fitted on
+earlier seasons only, 42 season × cutoff cells, NWC half-PPR): blend MAE
+2.288 vs EB 2.449 in the full population and 1.987 vs 2.096 in the waiver
+population. The blend beats EB at every position, and in all 7 seasons in
+the full population, by roughly 3–9 season-clustered standard errors. The exception
+is waiver-population QB (−0.27 ± 0.17). Top-5 hit rate did not improve and
+is reported as unsettled. Snap share was adopted (−0.035 ± 0.005 PPR MAE).
+xFP as a feature was measured and rejected (no gain). Full tables are in
+`docs/valuation-model.md`.
+
+**Integration:** `build_free_agent_ros_projections` and
+`build_waiver_wire_rankings` take `usage_parameters`, `scoring_settings` and
+`usage`. With all three they blend. `usage_parameters=None` reproduces the
+EB projection exactly. `projection_model` (`blend`/`eb`/`absent_prior`),
+`eb_projected_ppg`, `usage_projected_ppg`, `snap_share*`, `xfp_per_game` and
+`points_over_expected_per_game` explain each row. On 2026-09-30 the three
+arguments were passed to both the dashboard's board and its universe
+projection (the lineup call and the valuation CSV), and to
+`cli.build_free_agent_rankings` via `_load_usage_inputs`. That helper falls
+back to EB alone with no parameter file, and to the no-snap model with no
+snap cache. The dashboard build prints which model it ran.
+
+**Tests:** `tests/players/test_usage_projection.py` (hand-worked WR toy
+example, fit and backtest mechanics), `tests/players/test_waiver_rankings.py`
+(`test_usage_model_projection_and_blend_by_hand`, the explanation columns,
+the EB fallback without scoring settings), `tests/test_build_dashboard_script.py`
+(board and universe projection receive the same three inputs) and
+`tests/test_cli.py` (the CLI passes them through; loader fallbacks). CLI tests
+stub `_load_usage_inputs` so the local caches never change a ranking.
+
+### FFA-104 — Absent-Prior Projection
+**Owner:** Data Scientist
+**Depends on:** FFA-096 (min-prior-games guard), FFA-111
+
+A crosswalked player with no games to date and fewer than
+`min_prior_games` (4) prior-season games used to get the positional mean of
+players who *are* playing. That mean sits above replacement, so on the
+2026 week-1 board five retired or unsigned RBs tied at waiver rank 20. The
+old fallback was measured against a historical cohort: players in exactly
+that state at a cutoff who then played ≥4 games (2019–2025, cutoffs 2–10).
+Its PPR bias was +7.2 QB / +3.8 RB / +2.2 TE / +4.5 WR ppg, while the
+fitted line's was +0.08 / +0.78 / −0.09 / +0.27. The cohort is conditioned on
+playing, so it is an upper bound.
+
+Two tiers. With a usage model, such a player gets the fitted absent-prior
+stat line, scored in the league (NWC half-PPR: QB 7.7, RB 3.8, TE 2.3,
+WR 2.6). Without one, he gets the positional mean times
+`DEFAULT_ABSENT_PRIOR_RATIO` (QB 0.51, RB 0.56, TE 0.54, WR 0.41). Every
+absent player at a position shares one value, so they tie (competition
+ranking). `projection_model = "absent_prior"`.
+
+**Dashboard workaround removed (2026-09-30).** `WAIVER_QUALITY_FILTER`,
+the prior/current clause that dropped such players at display time, and
+`RAW_WAIVER_DEPTH`, the 600-row pre-filter cut it needed, are gone from
+`scripts/build_dashboard.py`. Re-measured on that day's week-4 boards with
+refreshed caches, the best-ranked player the clause would have removed is
+136th of 577 skill free agents in NWC (180th once K/DEF are merged), 167th
+in New Wave and 140th in Zipline. The page shows 40. The page's "Who is on
+the board" note was rewritten to match.
+
+**Tests:** `tests/players/test_waiver_rankings.py`
+(`test_zero_games_no_prior_gets_the_absent_prior`,
+`test_absent_prior_uses_the_fitted_line_and_players_tie`,
+`test_absent_prior_players_tie_below_players_with_evidence`) and
+`tests/players/test_usage_projection.py`
+(`test_absent_prior_players_share_the_fitted_line_and_tie`,
+`test_absent_prior_cohort_selection`). The dashboard test that pinned the
+filter was replaced by the FFA-111 wiring test, which asserts a no-data
+free agent stays on the board.

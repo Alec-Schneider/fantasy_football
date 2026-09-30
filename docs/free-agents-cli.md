@@ -94,7 +94,9 @@ of unrostered junk.
 
 **Prior-season sample size (FFA-096).** `prior_season_ppg` is only trusted
 at `DEFAULT_MIN_PRIOR_GAMES = 4` games or more; below that it falls back
-to the positional mean. Since a player with no games this season has a
+to the positional mean -- or, for a player with no games this season
+either, to the fitted absent-prior line (FFA-104, below). Since a player
+with no games this season has a
 blend weight of exactly zero, an untrusted one-game prior would otherwise
 *become* his whole projection. The raw value and the new
 `prior_season_games` column are still reported, so a board can show the
@@ -114,6 +116,25 @@ The uniform fallback is directionally reasonable but measurably less
 accurate than the validated per-position values (`n0={RB: 2.0, WR: 2.0,
 TE: 2.5, QB: 4.0}`) that
 [`docs/ros-projection-accuracy.md`](ros-projection-accuracy.md) reports.
+
+**Projection model (FFA-111, FFA-104).** Loads the fitted usage model from
+`.cache/nflverse/usage_model_parameters.json` and the season's snap-count
+and expected-points caches, and passes them with the league's scoring
+settings. `projected_ppg` is then the per-position blend of the
+opportunity-first usage model and the shrinkage projection. A player with no
+games and no trusted prior gets the fitted absent-prior line, scored in the
+league. `projection_model` says which applied per row (`blend`, `eb`,
+`absent_prior`). Without the parameter file the ranking is the shrinkage
+projection alone, and without the snap caches it uses the no-snap usage
+model. Create or refresh them with:
+
+```bash
+python scripts/fetch_usage_seasons.py --start 2014 --end 2026   # snap counts + expected points
+python scripts/fit_usage_model.py --start 2015 --end 2025
+```
+
+See [`docs/valuation-model.md`](valuation-model.md) for the model and its
+backtest.
 
 ## Context columns beside the ranking
 
