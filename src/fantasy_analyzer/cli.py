@@ -106,6 +106,11 @@ from fantasy_analyzer.players.ros_projection import (
     ShrinkageParameters,
     load_shrinkage_parameters,
 )
+from fantasy_analyzer.players.usage import load_usage_player_weeks
+from fantasy_analyzer.players.usage_projection import (
+    UsageModelParameters,
+    load_usage_model_parameters,
+)
 from fantasy_analyzer.players.waiver_rankings import build_waiver_wire_rankings
 from fantasy_analyzer.sleeper.cache import get_players_cached
 from fantasy_analyzer.sleeper.client import SleeperClient
@@ -634,6 +639,27 @@ def _fetch_weekly_frames(
     return pd.concat(frames, ignore_index=True)
 
 
+def _load_usage_inputs(
+    season: int,
+) -> tuple[Optional[UsageModelParameters], Optional[pd.DataFrame]]:
+    """The fitted usage model and the snap/xFP frame, from the local caches.
+
+    Returns ``(usage_parameters, usage)``, the frame covering ``season`` and
+    ``season - 1`` (the window the usage features read). No parameter file
+    gives ``(None, None)`` -- the EB projection alone. Parameters but no
+    snap/xFP cache gives ``(parameters, None)`` -- the separately fitted
+    no-snap usage model. Never touches the network.
+    """
+    usage_parameters = load_usage_model_parameters()
+    if usage_parameters is None:
+        return None, None
+    try:
+        usage = load_usage_player_weeks([season - 1, season])
+    except FileNotFoundError:
+        return usage_parameters, None
+    return usage_parameters, usage
+
+
 def build_free_agent_rankings(
     client: SleeperClient,
     league_id: str,
@@ -657,8 +683,8 @@ def build_free_agent_rankings(
     and the waiver-wire ranking itself
     (:func:`~fantasy_analyzer.players.waiver_rankings.build_waiver_wire_rankings`).
 
-    Three composition choices here carry most of the ranking's accuracy,
-    and all three were originally made the other way:
+    Four composition choices here carry most of the ranking's accuracy,
+    and all four were originally made the other way:
 
     **Crosswalk (FFA-097).** Uses
     :func:`~fantasy_analyzer.players.crosswalk.build_robust_id_crosswalk`
@@ -687,6 +713,15 @@ def build_free_agent_rankings(
     than the validated per-position values
     (``n0={RB: 2.0, WR: 2.0, TE: 2.5, QB: 4.0}``) reported in
     ``docs/ros-projection-accuracy.md``.
+
+    **Projection model (FFA-111, FFA-104).** Passes the fitted usage model,
+    the league's ``scoring_settings`` and the cached snap/xFP frame
+    (:func:`_load_usage_inputs`), so ``projected_ppg`` is the per-position
+    blend of the usage model and the EB projection, and a player with no
+    games and no trusted prior gets the fitted absent-prior line scored in
+    this league. Without the cached parameters it falls back to EB alone;
+    without the snap/xFP caches, to the no-snap usage model. See
+    ``docs/valuation-model.md``.
 
     Args:
         client: A configured ``SleeperClient``.
@@ -748,6 +783,7 @@ def build_free_agent_rankings(
     parameters = load_shrinkage_parameters() or ShrinkageParameters(
         n0_by_position={}, default_n0=DEFAULT_N0
     )
+    usage_parameters, usage = _load_usage_inputs(season)
 
     rankings = build_waiver_wire_rankings(
         free_agent_pool,
@@ -758,6 +794,9 @@ def build_free_agent_rankings(
         snapshot.league.total_rosters,
         parameters,
         replacement_population=league_population,
+        usage_parameters=usage_parameters,
+        scoring_settings=snapshot.scoring_settings,
+        usage=usage,
     )
 
     if position:
@@ -780,7 +819,7 @@ def run_free_agents(
 ) -> str:
     """Build and format a league's free-agent waiver-wire rankings (FFA-093).
 
-    See :func:`build_free_agent_rankings` for the pipeline, the three
+    See :func:`build_free_agent_rankings` for the pipeline, the four
     composition choices that carry its accuracy, and the injectable
     ``provider``/``crosswalk`` seams tests use to stay offline.
     """

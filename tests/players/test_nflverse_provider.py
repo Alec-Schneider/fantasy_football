@@ -26,7 +26,10 @@ from fantasy_analyzer.players.nflverse_provider import (
     normalize_player_stats,
 )
 from fantasy_analyzer.players.provider import validate_player_week_columns
-from fantasy_analyzer.players.scoring import SCORING_KEY_TO_STAT_COLUMNS
+from fantasy_analyzer.players.scoring import (
+    PREFERRED_TOTAL_COLUMNS,
+    SCORING_KEY_TO_STAT_COLUMNS,
+)
 
 SEASON = 2025
 
@@ -424,6 +427,21 @@ def test_opportunity_columns_are_not_scoreable(raw_stats: pd.DataFrame) -> None:
         for column in columns
     }
     assert not scoreable & set(OPPORTUNITY_COLUMNS)
+
+
+def test_raw_stat_columns_cover_every_scored_column() -> None:
+    """Every column a scoring key reads is carried, so both paths score alike.
+
+    ``scoring.py`` reads blocked kicks, return and fumble-recovery TDs and
+    ``fumbles_lost_total``; a provider that dropped them would score the
+    fact table differently from the raw nflverse table.
+    """
+    scored = {
+        column
+        for columns in SCORING_KEY_TO_STAT_COLUMNS.values()
+        for column in columns
+    } | set(PREFERRED_TOTAL_COLUMNS.values())
+    assert scored <= set(RAW_STAT_COLUMNS)
 
 
 def test_opportunity_columns_may_be_missing_per_player(

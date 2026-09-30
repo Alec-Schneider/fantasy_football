@@ -286,6 +286,49 @@ def bye_weeks(schedule: pd.DataFrame, season_end_week: int) -> dict[str, Optiona
     return byes
 
 
+def completed_nfl_weeks(schedule: pd.DataFrame, season: int) -> list[int]:
+    """NFL weeks of ``season`` in which every scheduled game has a final score.
+
+    A week is complete iff it has at least one regular-season game and
+    every one of its games carries both ``home_score`` and ``away_score``.
+    This is the exact signal a fantasy week needs (FFA-108): fantasy
+    points alone cannot tell a finished week from one still waiting on
+    Monday night, because by Monday every fantasy team already has *some*
+    points. nflverse fills a game's scores once it is final, so a week
+    with 15 of 16 games scored is not complete.
+
+    Regular season only (``game_type == "REG"``), matching
+    :func:`normalize_schedule`. A game that is never played (cancelled)
+    keeps its week incomplete forever -- the conservative failure: the
+    week shows as unfinished rather than final with a missing result.
+
+    Args:
+        schedule: nflverse's one-row-per-game table, as returned by
+            :func:`~fantasy_analyzer.players.nflverse_schedule_cache.get_games_cached`
+            -- the ``games`` input to :func:`normalize_schedule`, not its
+            output, which carries no scores.
+        season: The season to inspect.
+
+    Returns:
+        The complete weeks, ascending. Empty if ``schedule`` is empty, has
+        no score columns, or has no regular-season rows for ``season``.
+    """
+    required = {"season", "week", "home_score", "away_score"}
+    if schedule.empty or not required <= set(schedule.columns):
+        return []
+
+    games = schedule[schedule["season"] == season]
+    if "game_type" in games.columns:
+        games = games[games["game_type"] == "REG"]
+    if games.empty:
+        return []
+
+    home = pd.to_numeric(games["home_score"], errors="coerce")
+    away = pd.to_numeric(games["away_score"], errors="coerce")
+    scored = (home.notna() & away.notna()).groupby(games["week"]).all()
+    return sorted(int(week) for week, done in scored.items() if done)
+
+
 def build_defense_vs_position(
     scored_weeks: pd.DataFrame,
     season: int,

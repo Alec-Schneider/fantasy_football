@@ -76,18 +76,22 @@ What this module does *not* do
 - **No opponent adjustment**, no depth-chart or injury signal, no market
   consensus.
 
-Where this goes next
+Where this went next (FFA-111)
 --------------------------------------------------------------------------
 
-The measured findings behind this epic say the largest remaining gain is
-opportunity-first: project volume (targets for receivers, carries for backs,
-rushing volume for quarterbacks), then apply an efficiency rate regressed
-hard toward the positional mean, and score the resulting stat line through
-:mod:`fantasy_analyzer.players.scoring`. Touchdown rate in particular is the
-least stable input measured, and is the central waiver trap -- a player whose
-season-to-date scoring is touchdown-driven is being priced on the least
-repeatable thing he did. This module prices him on points, so it inherits
-that trap; the next one should not.
+The measured findings behind this epic said the largest remaining gain was
+opportunity-first: project volume, apply efficiency and touchdown rates
+regressed toward the positional mean by fitted amounts, and score the stat
+line through :mod:`fantasy_analyzer.players.scoring`. That is
+:mod:`fantasy_analyzer.players.usage_projection`. This module prices a
+player on points, so it inherits the touchdown trap; the usage model does
+not. Measured under rolling origin (2019-2025), neither is best alone:
+the shipped projection is a per-position blend of the two, with 0.65-0.80
+of the weight on usage (see ``docs/valuation-model.md``). This module
+stays the EB half of that blend and the fallback when no usage model is
+supplied. :func:`fit_shrinkage_on_rows` and :func:`resolve_prior_by_cell`
+exist so the rolling-origin backtest can refit ``n0`` on stacked rows
+without rebuilding every evaluation set.
 """
 
 from __future__ import annotations
@@ -416,6 +420,91 @@ def fit_shrinkage(
         )
 
     rows = pd.concat(pooled, ignore_index=True)
+    return fit_shrinkage_on_rows(
+        rows,
+        fit_seasons,
+        n0_grid=n0_grid,
+        positions=positions,
+        min_rows=min_rows,
+        default_n0=default_n0,
+    )
+
+
+def resolve_prior_by_cell(evaluation_rows: pd.DataFrame) -> pd.Series:
+    """:func:`project_ppg`'s resolved prior, computed per evaluation cell.
+
+    Stacked evaluation rows (many ``(season, cutoff_week)`` cells in one
+    frame) must resolve the positional-mean fallback *within* each cell,
+    exactly as :func:`build_ros_evaluation_set` + :func:`project_ppg` would
+    have one cell at a time; pooling the mean across cells would let one
+    season's scoring leak into another's prior.
+
+    Args:
+        evaluation_rows: Rows shaped like
+            :data:`~fantasy_analyzer.players.ros_backtest.ROS_EVALUATION_COLUMNS`,
+            possibly spanning many cells.
+
+    Returns:
+        The resolved prior, aligned to ``evaluation_rows``' index.
+    """
+    if evaluation_rows.empty:
+        return pd.Series(dtype=float)
+    positional_mean = evaluation_rows.groupby(["season", "cutoff_week", "position"])[
+        "ppg_to_date"
+    ].transform("mean")
+    prior = evaluation_rows["prior_season_ppg"]
+    return prior.where(prior.notna(), positional_mean)
+
+
+def fit_shrinkage_on_rows(
+    rows: pd.DataFrame,
+    fit_seasons: Sequence[int],
+    *,
+    n0_grid: Sequence[float] = DEFAULT_N0_GRID,
+    positions: Optional[Iterable[str]] = None,
+    min_rows: int = 30,
+    default_n0: float = DEFAULT_N0,
+) -> ShrinkageParameters:
+    """Grid-search ``n0`` per position over already-built evaluation rows.
+
+    The search half of :func:`fit_shrinkage`, split out so a caller that
+    already holds stacked evaluation rows (a rolling-origin backtest refits
+    on a growing window many times) does not rebuild them per fit. Only rows
+    whose ``season`` is in ``fit_seasons`` are used.
+
+    Args:
+        rows: Stacked evaluation rows. A ``prior_resolved`` column is used
+            if present; otherwise it is computed with
+            :func:`resolve_prior_by_cell`.
+        fit_seasons: Seasons to fit on (must exclude any scored season).
+        n0_grid: Candidate values, in games.
+        positions: Positions to fit. Defaults to every position present.
+        min_rows: Minimum pooled rows required to fit a position.
+        default_n0: Fallback for positions that are unfitted or too sparse.
+
+    Returns:
+        A :class:`ShrinkageParameters`, as :func:`fit_shrinkage` returns.
+    """
+    if not len(n0_grid):
+        raise ValueError("n0_grid must not be empty.")
+    if any(candidate <= 0 for candidate in n0_grid):
+        raise ValueError(f"every n0 candidate must be positive; got {list(n0_grid)}.")
+
+    if not rows.empty:
+        rows = rows[rows["season"].isin(list(fit_seasons))]
+    if rows.empty:
+        return ShrinkageParameters(
+            n0_by_position={},
+            default_n0=default_n0,
+            fit_seasons=tuple(sorted(fit_seasons)),
+            fit_mae={},
+        )
+    prior_resolved = (
+        rows["prior_resolved"]
+        if "prior_resolved" in rows.columns
+        else resolve_prior_by_cell(rows)
+    )
+
     if positions is None:
         positions = sorted(rows["position"].dropna().unique())
 
@@ -428,7 +517,7 @@ def fit_shrinkage(
 
         games = subset["games_to_date"].astype(float).to_numpy()
         observed = subset["ppg_to_date"].to_numpy()
-        prior = subset["prior_resolved"].to_numpy()
+        prior = prior_resolved.loc[subset.index].to_numpy()
         actual = subset["ros_ppg"].to_numpy()
 
         best_n0, best_mae = None, np.inf

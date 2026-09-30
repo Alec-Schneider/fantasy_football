@@ -180,6 +180,38 @@ CARRIED_OPPORTUNITY_COLUMNS = (
     "carries",
 )
 
+#: Raw offensive counting stats :func:`build_scored_player_weeks` carries
+#: through when present (FFA-111).
+#:
+#: :mod:`fantasy_analyzer.players.usage_projection` rebuilds a player's
+#: projection from volume (``attempts``, ``carries``, ``targets``) times a
+#: regressed per-opportunity rate (yards, receptions, touchdowns,
+#: interceptions, fumbles per opportunity), and then scores that stat line
+#: through the league's own settings. Every numerator and denominator it
+#: needs is here. They are the offensive subset of
+#: :data:`~fantasy_analyzer.players.nflverse_provider.RAW_STAT_COLUMNS`
+#: (kicking columns are left out: no model here projects them).
+CARRIED_STAT_COLUMNS = (
+    "completions",
+    "attempts",
+    "passing_yards",
+    "passing_tds",
+    "passing_interceptions",
+    "sacks_suffered",
+    "sack_fumbles_lost",
+    "passing_2pt_conversions",
+    "rushing_yards",
+    "rushing_tds",
+    "rushing_fumbles_lost",
+    "rushing_2pt_conversions",
+    "receptions",
+    "receiving_yards",
+    "receiving_tds",
+    "receiving_fumbles_lost",
+    "receiving_2pt_conversions",
+    "fumbles_lost_total",
+)
+
 #: Minimum weeks a player must have left (and have played) after the cutoff
 #: to be scored. Below this the target is an average of one or two games,
 #: which is noise rather than a rest-of-season rate.
@@ -280,7 +312,9 @@ def build_scored_player_weeks(
     Returns:
         A DataFrame with ``season``, ``week``, ``player_id``,
         ``player_name``, ``position``, ``fantasy_points``, and every
-        opportunity column present in the input. Regular-season rows only
+        context, opportunity and raw offensive stat column
+        (:data:`CARRIED_CONTEXT_COLUMNS`, :data:`CARRIED_OPPORTUNITY_COLUMNS`,
+        :data:`CARRIED_STAT_COLUMNS`) present in the input. Regular-season rows only
         when a ``season_type`` column is present. Rows with no
         ``player_id`` are dropped: an unidentifiable player cannot be
         tracked across weeks, which is the whole basis of this analysis.
@@ -320,8 +354,10 @@ def build_scored_player_weeks(
             "fantasy_points": scored["fantasy_points"],
         }
     )
-    for column in CARRIED_CONTEXT_COLUMNS + CARRIED_OPPORTUNITY_COLUMNS:
-        if column in scored.columns:
+    for column in (
+        CARRIED_CONTEXT_COLUMNS + CARRIED_OPPORTUNITY_COLUMNS + CARRIED_STAT_COLUMNS
+    ):
+        if column in scored.columns and column not in result.columns:
             result[column] = scored[column].to_numpy()
 
     result = result[result["player_id"].notna()]

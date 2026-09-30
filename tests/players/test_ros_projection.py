@@ -583,3 +583,96 @@ def test_save_shrinkage_parameters_accepts_numpy_scalars(tmp_path) -> None:
     assert loaded.fit_seasons == (2016, 2017)
     assert isinstance(loaded.fit_seasons[0], int)
     assert loaded.n0_for("RB") == 2.0
+
+
+# --------------------------------------------------------------------------
+# fit_shrinkage_on_rows / resolve_prior_by_cell (FFA-111 refactor)
+# --------------------------------------------------------------------------
+
+
+def test_fit_on_rows_matches_fit_shrinkage(prior_heavy_weeks: pd.DataFrame) -> None:
+    """The split-out grid search is the same fit, on pre-built rows."""
+    from fantasy_analyzer.players.ros_backtest import build_ros_evaluation_set
+    from fantasy_analyzer.players.ros_projection import fit_shrinkage_on_rows
+
+    seasons = sorted(prior_heavy_weeks["season"].unique())[1:]
+    expected = fit_shrinkage(
+        prior_heavy_weeks, seasons, [4], min_rows=1, season_end_week=8
+    )
+    rows = pd.concat(
+        [
+            build_ros_evaluation_set(
+                prior_heavy_weeks,
+                season,
+                4,
+                prior_season_weeks=prior_heavy_weeks,
+                season_end_week=8,
+            ).evaluation_df
+            for season in seasons
+        ],
+        ignore_index=True,
+    )
+    actual = fit_shrinkage_on_rows(rows, seasons, min_rows=1)
+    assert actual.n0_by_position == expected.n0_by_position
+    assert actual.fit_mae == pytest.approx(expected.fit_mae)
+    assert actual.fit_seasons == expected.fit_seasons
+
+
+def test_fit_on_rows_ignores_rows_outside_the_fit_seasons() -> None:
+    from fantasy_analyzer.players.ros_projection import fit_shrinkage_on_rows
+
+    frame = _evaluation_frame(
+        [
+            {
+                "player_id": "a",
+                "games_to_date": 2,
+                "ppg_to_date": 10.0,
+                "prior_season_ppg": 10.0,
+                "ros_ppg": 10.0,
+                "season": 2030,
+            }
+        ]
+    )
+    fitted = fit_shrinkage_on_rows(frame, [2024], min_rows=1)
+    assert fitted.n0_by_position == {}
+    assert fitted.fit_seasons == (2024,)
+
+
+def test_resolve_prior_by_cell_never_pools_across_cells() -> None:
+    """Each cell's fallback is its own positional mean: 10.0 and 30.0.
+
+    Pooled across cells it would be 20.0 for both -- one season's scoring
+    leaking into another's prior.
+    """
+    from fantasy_analyzer.players.ros_projection import resolve_prior_by_cell
+
+    frame = _evaluation_frame(
+        [
+            {
+                "player_id": "a",
+                "season": 2024,
+                "games_to_date": 1,
+                "ppg_to_date": 10.0,
+                "prior_season_ppg": np.nan,
+                "ros_ppg": 0.0,
+            },
+            {
+                "player_id": "b",
+                "season": 2025,
+                "games_to_date": 1,
+                "ppg_to_date": 30.0,
+                "prior_season_ppg": np.nan,
+                "ros_ppg": 0.0,
+            },
+            {
+                "player_id": "c",
+                "season": 2025,
+                "games_to_date": 1,
+                "ppg_to_date": 30.0,
+                "prior_season_ppg": 12.0,
+                "ros_ppg": 0.0,
+            },
+        ]
+    )
+    resolved = resolve_prior_by_cell(frame)
+    assert resolved.tolist() == pytest.approx([10.0, 30.0, 12.0])

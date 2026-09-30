@@ -52,6 +52,66 @@ mismatch; this module's output uses Sleeper's codes (so a future join
 against Sleeper roster data works directly), while the points-allowed join
 happens *before* aliasing, since ``points_allowed.py`` is nflverse-native
 (see that module's docstring).
+
+Sleeper-scoreable team-week stat line (FFA-112)
+--------------------------------------------------------------------------
+
+:func:`build_team_defense_stats` above stays a descriptive per-week sum.
+:func:`build_team_defense_weeks` is the scoring-grade successor: one row
+per team-game for a whole season, with every quantity
+:func:`fantasy_analyzer.players.scoring.calculate_team_defense_points`
+needs, each derived the way Sleeper's own ``DEF`` points turned out to be
+computed. Every derivation below was checked two ways: against nflverse's
+play-by-play for 2025 (which classifies each play, so special-teams and
+scrimmage events can be told apart), and against Sleeper's own ``DEF``
+points for three real leagues. See ``docs/kicker-defense.md`` for the
+evidence table.
+
+- **Player-less rows are dropped.** Each week of nflverse's weekly table
+  carries one row with no ``player_id``, holding that week's
+  *unattributed* stats (penalty safeties above all) under an arbitrary
+  team -- in 2025 week 3 it credited Arizona's safety to Miami. Summing
+  it would hand a safety to the wrong defense.
+- **Unattributed safeties are recovered from the score.** A team's final
+  score is reconstructed from its players' touchdowns, kicks, two-point
+  conversions and safeties. For 2015-2026 the reconstruction is exact for
+  every team-game except those short by exactly 2, and in every one of
+  those weeks the count of 2-short teams equals the player-less row's
+  safety count. ``unattributed_safeties`` is therefore
+  ``score_residual / 2`` when that residual is a positive even number.
+- **Sacks** come from the *opponent's* ``sacks_suffered``, not the sum of
+  ``def_sacks``: team sacks with no credited defender (9 team-games in
+  2025) appear only there. It matched play-by-play in 544 of 544 2025
+  team-games; ``def_sacks`` in 535.
+- **Special-teams fumble recoveries** (Sleeper's ``def_st_fum_rec``,
+  worth less than ``fum_rec``) are the opponent's *return* fumbles lost:
+  ``fumbles_lost_total`` less the three scrimmage fumble columns, on
+  rows of players who returned a punt or kickoff that week, capped at the
+  team's own ``fumble_recovery_opp``. The rest of ``fumble_recovery_opp``
+  is ``fumble_recoveries``.
+- **Defensive touchdowns** are ``def_tds`` (interception returns) **plus**
+  fumble-return touchdowns, which nflverse files under
+  ``fumble_recovery_tds`` instead. Only a row whose recovery was of the
+  *opponent's* fumble (``fumble_recovery_opp``) counts; an offensive
+  player falling on his own fumble in the end zone scored an offensive
+  touchdown.
+- **``def_points_allowed``** is the opponent's score minus 6 per
+  defensive touchdown and minus 2 per safety the opponent scored --
+  Sleeper's definition, not the raw score (which is kept as
+  ``points_allowed``). The point after a defensive touchdown, and
+  special-teams return touchdowns, stay in.
+- **Forced fumbles** include special-teams ones. The weekly table cannot
+  separate them, and every league checked weights ``ff`` and
+  ``def_st_ff`` equally, so the total is exact for them;
+  ``st_forced_fumbles`` is emitted as zero so a league that weights the
+  two differently gets the documented approximation rather than a crash.
+
+Team codes: historical franchise codes in nflverse's *schedule*
+(``OAK``/``SD``/``STL``) are folded into the franchise's current code
+(:data:`FRANCHISE_CODE_ALIASES`) before joining, because nflverse's
+*player stats* already use current codes for every season. Output codes
+follow Sleeper (:data:`TEAM_CODE_ALIASES`). Regular season only. A team
+on a bye, or a game without a final score, has no row.
 """
 
 from __future__ import annotations
@@ -59,6 +119,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, Union
 
+import numpy as np
 import pandas as pd
 
 from fantasy_analyzer.players.nflverse_cache import (
@@ -77,6 +138,56 @@ from fantasy_analyzer.players.provider import PLAYER_WEEK_IDENTITY_COLUMNS
 TEAM_CODE_ALIASES: dict[str, str] = {
     "LA": "LAR",
 }
+
+#: Historical nflverse franchise code -> that franchise's current nflverse
+#: code. nflverse's *schedule* keeps the code a team used that season
+#: (``OAK`` through 2019, ``SD`` in 2016, ``STL`` through 2015), while its
+#: *player stats* use the current code for every season -- measured on the
+#: cached 2016-2019 files, where every mismatch between the two
+#: vocabularies was one of these three.
+FRANCHISE_CODE_ALIASES: dict[str, str] = {
+    "OAK": "LV",
+    "SD": "LAC",
+    "STL": "LA",
+}
+
+#: Column order of :func:`build_team_defense_weeks`'s output.
+TEAM_DEFENSE_WEEK_COLUMNS = [
+    "season",
+    "week",
+    "team",
+    "opponent",
+    "is_home",
+    "points_scored",
+    "points_allowed",
+    "def_points_allowed",
+    "sacks",
+    "interceptions",
+    "fumble_recoveries",
+    "st_fumble_recoveries",
+    "forced_fumbles",
+    "st_forced_fumbles",
+    "def_tds",
+    "st_tds",
+    "safeties",
+    "blocked_kicks",
+    "unattributed_safeties",
+    "score_residual",
+]
+
+_TEAM_WEEK_SOURCE_COLUMNS = [
+    "def_interceptions",
+    "fumble_recovery_opp",
+    "def_fumbles_forced",
+    "def_tds",
+    "special_teams_tds",
+    "def_safeties",
+    "sacks_suffered",
+    "_def_fumble_return_tds",
+    "_return_fumbles_lost",
+    "_blocked_kicks",
+    "_reconstructed_points",
+]
 
 #: Raw nflverse per-player defensive/special-teams columns summed by
 #: ``(season, week, team)`` to build one team-defense row. See the module
@@ -240,3 +351,235 @@ class NflverseTeamDefenseProvider:
         return build_team_defense_stats(
             self._raw_stats_by_season[season], points_allowed, season, week
         )
+
+
+def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
+    """``frame[column]`` as floats with ``NaN`` -> 0; zeros if absent."""
+    if column not in frame.columns:
+        return pd.Series(0.0, index=frame.index)
+    return pd.to_numeric(frame[column], errors="coerce").fillna(0.0).astype(float)
+
+
+def _team_game_schedule(games: pd.DataFrame, season: int) -> pd.DataFrame:
+    """Two rows per scored regular-season game: team, opponent, both scores."""
+    required = {"season", "week", "home_team", "away_team", "home_score", "away_score"}
+    if games.empty or not required.issubset(games.columns):
+        return pd.DataFrame(
+            columns=["week", "team", "opponent", "is_home", "score", "opp_score"]
+        )
+    played = games[
+        (games["season"] == season)
+        & games["home_score"].notna()
+        & games["away_score"].notna()
+    ]
+    if "game_type" in played.columns:
+        played = played[played["game_type"] == "REG"]
+    home = pd.DataFrame(
+        {
+            "week": played["week"],
+            "team": played["home_team"],
+            "opponent": played["away_team"],
+            "is_home": True,
+            "score": played["home_score"],
+            "opp_score": played["away_score"],
+        }
+    )
+    away = pd.DataFrame(
+        {
+            "week": played["week"],
+            "team": played["away_team"],
+            "opponent": played["home_team"],
+            "is_home": False,
+            "score": played["away_score"],
+            "opp_score": played["home_score"],
+        }
+    )
+    schedule = pd.concat([home, away], ignore_index=True)
+    for column in ("team", "opponent"):
+        schedule[column] = schedule[column].replace(FRANCHISE_CODE_ALIASES)
+    schedule["week"] = schedule["week"].astype(int)
+    return schedule
+
+
+#: nflverse ``position_group`` values of defensive players. A fumble-return
+#: touchdown counts as a *defensive* touchdown only when one of these
+#: scored it: measured on 2025 play-by-play, that rule agrees on every
+#: team-game (544/544), while counting any player's opponent-fumble
+#: touchdown misfiles an offensive player who recovers his own team's
+#: turnover-return fumble in the end zone.
+DEFENSIVE_POSITION_GROUPS = frozenset({"DL", "LB", "DB"})
+
+
+def _per_team_sources(stats: pd.DataFrame) -> pd.DataFrame:
+    """Sum the per-player inputs of :func:`build_team_defense_weeks` by team-week.
+
+    Args:
+        stats: Regular-season, player-identified raw nflverse rows.
+
+    Returns:
+        A frame indexed by ``(week, team)`` (franchise-aliased nflverse
+        codes) with :data:`_TEAM_WEEK_SOURCE_COLUMNS`.
+    """
+    if stats.empty:
+        return pd.DataFrame(
+            columns=_TEAM_WEEK_SOURCE_COLUMNS,
+            index=pd.MultiIndex.from_arrays([[], []], names=["week", "team"]),
+        )
+    fumble_recovery_tds = _numeric(stats, "fumble_recovery_tds")
+    if "position_group" in stats.columns:
+        is_defender = stats["position_group"].isin(DEFENSIVE_POSITION_GROUPS)
+    else:
+        is_defender = pd.Series(True, index=stats.index)
+    returned = (
+        _numeric(stats, "punt_returns") + _numeric(stats, "kickoff_returns")
+    ) > 0
+    non_scrimmage_lost = (
+        _numeric(stats, "fumbles_lost_total")
+        - _numeric(stats, "sack_fumbles_lost")
+        - _numeric(stats, "rushing_fumbles_lost")
+        - _numeric(stats, "receiving_fumbles_lost")
+    ).clip(lower=0.0)
+    derived = pd.DataFrame(
+        {
+            "week": pd.to_numeric(stats["week"]).astype(int),
+            "team": stats["team"].replace(FRANCHISE_CODE_ALIASES),
+            "def_interceptions": _numeric(stats, "def_interceptions"),
+            "fumble_recovery_opp": _numeric(stats, "fumble_recovery_opp"),
+            "def_fumbles_forced": _numeric(stats, "def_fumbles_forced"),
+            "def_tds": _numeric(stats, "def_tds"),
+            "special_teams_tds": _numeric(stats, "special_teams_tds"),
+            "def_safeties": _numeric(stats, "def_safeties"),
+            "sacks_suffered": _numeric(stats, "sacks_suffered"),
+            "_def_fumble_return_tds": np.minimum(
+                fumble_recovery_tds, _numeric(stats, "fumble_recovery_opp")
+            ).where(is_defender, 0.0),
+            "_return_fumbles_lost": non_scrimmage_lost.where(returned, 0.0),
+            "_blocked_kicks": _numeric(stats, "def_punt_blocks")
+            + _numeric(stats, "def_fg_blocks")
+            + _numeric(stats, "def_pat_blocks"),
+            "_reconstructed_points": 6.0
+            * (
+                _numeric(stats, "rushing_tds")
+                + _numeric(stats, "receiving_tds")
+                + _numeric(stats, "def_tds")
+                + fumble_recovery_tds
+                + _numeric(stats, "special_teams_tds")
+            )
+            + 3.0 * _numeric(stats, "fg_made")
+            + _numeric(stats, "pat_made")
+            + 2.0
+            * (
+                _numeric(stats, "rushing_2pt_conversions")
+                + _numeric(stats, "receiving_2pt_conversions")
+                + _numeric(stats, "def_safeties")
+                + _numeric(stats, "def_2pt_made")
+            ),
+        }
+    )
+    return derived.groupby(["week", "team"])[_TEAM_WEEK_SOURCE_COLUMNS].sum()
+
+
+def build_team_defense_weeks(
+    raw_stats: pd.DataFrame, games: pd.DataFrame, season: int
+) -> pd.DataFrame:
+    """One Sleeper-scoreable team-defense stat line per team-game of a season.
+
+    See the module docstring's "Sleeper-scoreable team-week stat line"
+    section for how each column is derived and the evidence behind it.
+    Score it with
+    :func:`fantasy_analyzer.players.scoring.calculate_team_defense_points`.
+
+    Args:
+        raw_stats: nflverse's raw per-player weekly table covering
+            ``season`` (other seasons are ignored), e.g. the cached
+            ``player_stats_<season>.csv``. Rows whose ``season_type`` is
+            not ``"REG"`` and rows with no ``player_id`` are dropped.
+        games: nflverse's cumulative games table (``games.csv``).
+        season: The season to build.
+
+    Returns:
+        A DataFrame with :data:`TEAM_DEFENSE_WEEK_COLUMNS`, one row per team
+        per regular-season game with a final score, team codes in Sleeper's
+        convention. Stat columns are floats; a team with no player rows
+        for a played game gets zeros. Empty (same columns) when nothing
+        matches.
+    """
+    schedule = _team_game_schedule(games, season)
+    if schedule.empty:
+        return pd.DataFrame(columns=TEAM_DEFENSE_WEEK_COLUMNS)
+
+    stats = raw_stats
+    if "season" in stats.columns:
+        stats = stats[stats["season"] == season]
+    if "season_type" in stats.columns:
+        stats = stats[stats["season_type"] == "REG"]
+    if "player_id" in stats.columns:
+        stats = stats[stats["player_id"].notna()]
+    if not {"team", "week"}.issubset(stats.columns):
+        stats = pd.DataFrame(columns=["team", "week"])
+    stats = stats[stats["team"].notna()]
+    per_team = _per_team_sources(stats)
+
+    own = schedule.merge(
+        per_team, left_on=["week", "team"], right_index=True, how="left"
+    )
+    own[_TEAM_WEEK_SOURCE_COLUMNS] = own[_TEAM_WEEK_SOURCE_COLUMNS].fillna(0.0)
+    own["score_residual"] = own["score"].astype(float) - own["_reconstructed_points"]
+    residual = own["score_residual"]
+    own["unattributed_safeties"] = np.where(
+        (residual > 0) & (residual % 2 == 0), residual / 2.0, 0.0
+    )
+
+    # The same team-game seen from the other sideline: what the *opponent*
+    # did determines this defense's sacks, return-fumble recoveries and
+    # Sleeper points allowed.
+    opponent_view = pd.DataFrame(
+        {
+            "week": own["week"],
+            "opponent": own["team"],
+            "opp_sacks_suffered": own["sacks_suffered"],
+            "opp_def_tds": own["def_tds"] + own["_def_fumble_return_tds"],
+            "opp_safeties": own["def_safeties"] + own["unattributed_safeties"],
+            "opp_return_fumbles_lost": own["_return_fumbles_lost"],
+        }
+    )
+    merged = own.merge(opponent_view, on=["week", "opponent"], how="left")
+    opp_columns = list(opponent_view.columns[2:])
+    merged[opp_columns] = merged[opp_columns].fillna(0.0)
+
+    st_recoveries = np.minimum(
+        merged["opp_return_fumbles_lost"], merged["fumble_recovery_opp"]
+    )
+    result = pd.DataFrame(
+        {
+            "season": season,
+            "week": merged["week"].astype(int),
+            "team": merged["team"].map(lambda team: TEAM_CODE_ALIASES.get(team, team)),
+            "opponent": merged["opponent"].map(
+                lambda team: TEAM_CODE_ALIASES.get(team, team)
+            ),
+            "is_home": merged["is_home"].astype(bool),
+            "points_scored": merged["score"].astype(float),
+            "points_allowed": merged["opp_score"].astype(float),
+            "def_points_allowed": merged["opp_score"].astype(float)
+            - 6.0 * merged["opp_def_tds"]
+            - 2.0 * merged["opp_safeties"],
+            "sacks": merged["opp_sacks_suffered"],
+            "interceptions": merged["def_interceptions"],
+            "fumble_recoveries": merged["fumble_recovery_opp"] - st_recoveries,
+            "st_fumble_recoveries": st_recoveries,
+            "forced_fumbles": merged["def_fumbles_forced"],
+            "st_forced_fumbles": 0.0,
+            "def_tds": merged["def_tds"] + merged["_def_fumble_return_tds"],
+            "st_tds": merged["special_teams_tds"],
+            "safeties": merged["def_safeties"] + merged["unattributed_safeties"],
+            "blocked_kicks": merged["_blocked_kicks"],
+            "unattributed_safeties": merged["unattributed_safeties"],
+            "score_residual": merged["score_residual"],
+        }
+    )
+    return (
+        result[TEAM_DEFENSE_WEEK_COLUMNS]
+        .sort_values(["week", "team"], kind="stable")
+        .reset_index(drop=True)
+    )
