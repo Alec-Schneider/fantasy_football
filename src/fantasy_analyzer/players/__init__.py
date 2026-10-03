@@ -223,6 +223,7 @@ from fantasy_analyzer.players.player_week import (
     PlayerWeekFactTable,
     build_league_wide_player_week_fact_table,
     build_player_week_fact_table,
+    build_sleeper_scored_player_weeks,
 )
 from fantasy_analyzer.players.points_allowed import (
     POINTS_ALLOWED_COLUMNS,
@@ -432,6 +433,7 @@ __all__ = [
     "PlayerWeekFactTable",
     "build_player_week_fact_table",
     "build_league_wide_player_week_fact_table",
+    "build_sleeper_scored_player_weeks",
     "NflverseScheduleClient",
     "NflGameState",
     "NFLVERSE_SCHEDULE_DEFAULT_CACHE_DIR",

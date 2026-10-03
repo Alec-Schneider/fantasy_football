@@ -31,6 +31,12 @@ from fantasy_analyzer.analytics.matchup_history import (
     MatchupHistory,
     build_matchup_history,
 )
+from fantasy_analyzer.analytics.matchup_preview import (
+    MATCHUP_TEAM_STATS_COLUMNS,
+    build_matchup_team_stats,
+    build_position_comparison,
+    build_season_head_to_head,
+)
 from fantasy_analyzer.analytics.power_rankings import (
     ALL_PLAY_WIN_PCT_WEIGHT,
     MEAN_POINTS_WEIGHT,
@@ -67,6 +73,10 @@ from fantasy_analyzer.analytics.weekly_scores import (
 )
 
 __all__ = [
+    "build_matchup_team_stats",
+    "build_position_comparison",
+    "build_season_head_to_head",
+    "MATCHUP_TEAM_STATS_COLUMNS",
     "build_all_play_standings",
     "build_consistency_metrics",
     "build_league_analytics",
