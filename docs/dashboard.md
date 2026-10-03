@@ -115,16 +115,89 @@ stays stable.
 
 ## What the page shows
 
-The page is split by a real distinction, not by visual convenience:
+The page has two tabs, and both are driven by the same league switcher.
+The page remembers which tab you last opened.
+
+**Matchup** is the default tab. It shows the week about to be played (the
+same week as the lineup call) from the point of view of your head-to-head
+matchup. See "The Matchup tab" below.
+
+**Season** is split by a real distinction, not by visual convenience:
 
 - **Week N — what happened.** Scoreboard, recap, standings and power
   rankings, all recomputed for whichever week is selected. Standings come
   from `build_standings_through_week` (FFA-102), so an earlier week shows
   that week's table rather than today's.
 - **Week N+1 — what to do.** The waiver board and the lineup call. These
-  are always for the week about to be played; they do not follow the week
-  picker, because there is no useful sense in which you can set last week's
-  lineup.
+  are always for the week about to be played. They do not follow the week
+  picker, because there is no useful sense in which you can set last
+  week's lineup.
+
+## The Matchup tab
+
+Epic 11 (FFA-113–118). The design and the bundle contract are in
+`docs/matchup_tab.md`.
+
+The tab is meant to be read at both refresh points. Before kickoff it is a
+preview. After the mid-week rebuild it shows the score so far plus a
+projection for everyone yet to play.
+
+- **Scoreboard.** Both teams' live Sleeper scores, their projected finals,
+  how many starters each has still to play, and the win probability.
+- **Lineups, head to head.** The lineup *actually set in Sleeper* for each
+  side, slot by slot. Each row shows the NFL matchup, kickoff time or
+  Live/Final/Bye, injury, projection and actual points. Rows are tinted by
+  the projected edge.
+- **Positional edge.** Projected points, you minus the opponent, per slot
+  group.
+- **Alerts.** Out, IR or bye starters, empty slots and unprojected
+  starters on either side. Also the gap between your set lineup and the
+  recommended one, and how much your opponent is leaving on their bench.
+- **Season comparison.** Through the last completed week: record, rank,
+  PF/PA, PPG, last-3 PPG, high and low, weekly SD, all-play and power rank
+  (`analytics/matchup_preview.py`). Also each team's started points per
+  game by position with league rank, scored by Sleeper itself
+  (`build_sleeper_scored_player_weeks`), and this season's head-to-head
+  meetings.
+- **Benches**, collapsed.
+
+**How the projected final is built** (`players/matchup_projection.py`).
+It is the sum over a side's starters of their expected points:
+
+- A player whose NFL game has kicked off counts his live Sleeper points.
+- An available player yet to play counts his projection.
+- An empty slot, or an unavailable or unprojected starter, counts zero.
+
+The projection is the `lineup_ppg` column the lineup call solves on, so
+the two tabs never disagree about a player.
+
+A game in progress is scored at its live points. That understates the
+game, since its remaining minutes are not projected. The two scheduled
+refreshes never land mid-game.
+
+"Players to play" counts the starters still carrying a projection, and
+those are the starters the win probability's variance comes from.
+
+Each side's **optimal total** is the lineup solver run over that roster
+with locks and availability applied. For you it is the Season tab's
+recommended lineup. For the opponent it is how many points they are
+leaving on the bench.
+
+**Win probability** (FFA-114, `docs/win-probability.md`). Each team's
+final score is modelled as normal. Its mean is the projected final, and
+its variance sums a fitted per-player single-week variance over the
+starters still to play. Measured on 203 games from the three leagues'
+2025 seasons, it beats a coin flip (Brier 0.234 vs 0.250, log loss 0.659
+vs 0.693), and the favorite won 63.5% of the time. That is a real but
+modest edge. Read 60% as "slight favorite", not as a lock.
+
+The parameters come from `scripts/fit_win_probability.py`, saved as
+`.cache/nflverse/win_probability_parameters.json`. Fitting is a one-off,
+not part of the weekly refresh. Rerun it only if the projection pipeline
+changes. The build prints `win probability: calibrated, ...`. If the file
+is missing or uncalibrated, it says so, and the page shows only the
+projected margin. Week 1 never shows a probability either, because the
+calibration starts at week 2.
 
 ## Who is valued, and by which model
 
