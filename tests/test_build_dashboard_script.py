@@ -9,6 +9,7 @@ by unit tests.
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -1023,3 +1024,72 @@ def test_comparison_nulls_what_it_cannot_compute() -> None:
     )
     assert "stdev_points" in result["me"]
     assert result["me"]["stdev_points"] is None
+
+
+# --------------------------------------------------------------------------
+# Win probability on the matchup (FFA-114 wiring)
+# --------------------------------------------------------------------------
+
+from fantasy_analyzer.players.win_probability import (  # noqa: E402
+    WinProbabilityParameters,
+)
+
+
+def _win_parameters(calibrated=True):
+    return WinProbabilityParameters(
+        form="constant",
+        coefficients={"QB": 5.0, "RB": 5.0},
+        default_coefficient=5.0,
+        margin_sd_multiplier=1.2,
+        calibrated=calibrated,
+    )
+
+
+def _side_rows(rows):
+    return pd.DataFrame(rows, columns=["position", "projection", "pending"])
+
+
+def test_win_probability_block_hand_example() -> None:
+    """Me 30.0 with two pending starters, them 25.0 with one.
+
+    sd_me = sqrt(5^2 + 5^2) = 7.0711, sd_them = 5.0;
+    margin_sd = 1.2 * sqrt(50 + 25) = 10.3923;
+    P(me) = Phi(5 / 10.3923) = Phi(0.48113) = 0.68478.
+    """
+    mine = _side_rows([("QB", 20.0, True), ("RB", 10.0, True)])
+    theirs = _side_rows([("QB", 18.0, True), ("RB", 7.0, False)])
+    block = build_dashboard._win_probability_block(
+        {"projected_total": 30.0}, mine,
+        {"projected_total": 25.0}, theirs,
+        _win_parameters(),
+    )
+    assert block["me"] == pytest.approx(0.68478, abs=1e-5)
+    assert block["me"] + block["opponent"] == pytest.approx(1.0)
+    assert block["projected_margin"] == pytest.approx(5.0)
+    assert block["me_sd"] == pytest.approx(math.sqrt(50.0))
+    assert block["opponent_sd"] == pytest.approx(5.0)
+    assert block["margin_sd"] == pytest.approx(1.2 * math.sqrt(75.0))
+
+
+def test_win_probability_block_requires_calibrated_parameters() -> None:
+    mine = _side_rows([("QB", 20.0, True)])
+    args = ({"projected_total": 20.0}, mine, {"projected_total": 10.0}, mine)
+    assert build_dashboard._win_probability_block(*args, None) is None
+    assert (
+        build_dashboard._win_probability_block(
+            *args, _win_parameters(calibrated=False)
+        )
+        is None
+    )
+
+
+def test_matchup_carries_win_probability_when_calibrated() -> None:
+    """30 vs 30 with symmetric pending variance is a coin flip."""
+    result = build_dashboard._build_matchup(
+        MATCHUP_POSITIONS, 1, MATCHUP_PAYLOAD, MATCHUP_RAW_ROSTERS,
+        MATCHUP_TEAMS, MATCHUP_VALUED, {}, {}, _states(), MATCHUP_WEEK,
+        {"projected_points": 33.0}, 30.0, None,
+        win_parameters=_win_parameters(),
+    )
+    assert result["win_probability"]["me"] == pytest.approx(0.5)
+    assert result["win_probability"]["me_sd"] == pytest.approx(math.sqrt(50.0))

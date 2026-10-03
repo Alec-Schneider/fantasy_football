@@ -149,8 +149,15 @@ Sleeper* for both managers, slot by slot, with expected points
 (``players.matchup_projection``), per-slot-group edges, the opponent's
 optimal total, and a season-to-date comparison through the last completed
 week (``analytics.matchup_preview``). It is ``None`` with no roster, no
-matchup payload or an opponent-less bye. ``win_probability`` is ``None``
-until the FFA-114 model is wired in.
+matchup payload or an opponent-less bye.
+
+``win_probability`` comes from the FFA-114 model
+(``players.win_probability``, ``docs/win-probability.md``), fitted by
+``scripts/fit_win_probability.py``. It is ``None`` -- the page then shows
+only the projected margin -- when the parameter file is missing *or* was
+written without the team-level calibration: an uncalibrated probability is
+never published. The build prints which case applies. It is also ``None``
+in week 1: the calibration starts at week 2 (cutoff >= 1).
 """
 
 from __future__ import annotations
@@ -247,6 +254,12 @@ from fantasy_analyzer.players.usage_projection import (
 from fantasy_analyzer.players.waiver_rankings import (
     build_free_agent_ros_projections,
     build_waiver_wire_rankings,
+)
+from fantasy_analyzer.players.win_probability import (
+    WinProbabilityParameters,
+    load_win_probability_parameters,
+    team_score_sd,
+    win_probability,
 )
 from fantasy_analyzer.sleeper.cache import get_players_cached
 from fantasy_analyzer.sleeper.client import SleeperClient
@@ -1435,6 +1448,39 @@ def _matchup_side(
     )
 
 
+def _win_probability_block(
+    me: dict,
+    my_starters: pd.DataFrame,
+    opponent: dict,
+    their_starters: pd.DataFrame,
+    parameters: Optional[WinProbabilityParameters],
+) -> Optional[dict]:
+    """The contract's ``win_probability`` object, or ``None``.
+
+    ``None`` without parameters, with *uncalibrated* parameters, or when a
+    side has no projected total. Each side's SD sums the per-player
+    variance over its pending starters (``team_score_sd``); ``margin_sd``
+    includes the fitted inflation factor.
+    """
+    if parameters is None or not parameters.calibrated:
+        return None
+    mean, opponent_mean = me["projected_total"], opponent["projected_total"]
+    if mean is None or opponent_mean is None:
+        return None
+    sd = team_score_sd(my_starters, parameters)
+    opponent_sd = team_score_sd(their_starters, parameters)
+    probability = win_probability(mean, sd, opponent_mean, opponent_sd, parameters)
+    return {
+        "me": probability,
+        "opponent": 1.0 - probability,
+        "projected_margin": mean - opponent_mean,
+        "margin_sd": parameters.margin_sd_multiplier
+        * math.sqrt(sd**2 + opponent_sd**2),
+        "me_sd": sd,
+        "opponent_sd": opponent_sd,
+    }
+
+
 def _build_matchup(
     roster_positions: list[str],
     my_roster_id: Optional[int],
@@ -1449,6 +1495,7 @@ def _build_matchup(
     lineup: Optional[dict],
     opponent_optimal_total: Optional[float],
     comparison: Optional[dict],
+    win_parameters: Optional[WinProbabilityParameters] = None,
 ) -> Optional[dict]:
     """The contract's ``matchup`` object, or ``None`` (FFA-116).
 
@@ -1456,7 +1503,8 @@ def _build_matchup(
     ``matchup_id`` in ``week_raw``, or no opponent (a bye). ``phase`` is
     ``"live"`` once any NFL game this week has kicked off; ``nfl_games``
     counts games (a game appears once per team in ``game_states``).
-    ``win_probability`` is ``None`` until the FFA-114 model is wired in.
+    ``win_probability`` is :func:`_win_probability_block` over
+    ``win_parameters``.
     """
     if my_roster_id is None:
         return None
@@ -1507,7 +1555,9 @@ def _build_matchup(
         },
         "me": me,
         "opponent": opponent,
-        "win_probability": None,
+        "win_probability": _win_probability_block(
+            me, my_starters, opponent, their_starters, win_parameters
+        ),
         "position_edges": _records(
             build_position_edges(my_starters, their_starters)
         ),
@@ -1605,6 +1655,35 @@ def _load_usage_inputs(
     return usage_parameters, usage
 
 
+def _load_win_parameters() -> Optional[WinProbabilityParameters]:
+    """The fitted win-probability parameters, or ``None`` if unusable.
+
+    Prints which case applies, like :func:`_load_usage_inputs`: a missing
+    file and an uncalibrated one both leave the page showing only the
+    projected margin.
+    """
+    parameters = load_win_probability_parameters()
+    if parameters is None:
+        print(
+            "win probability: no fitted parameters (run "
+            "scripts/fit_win_probability.py) -- page shows the margin only",
+            flush=True,
+        )
+        return None
+    if not parameters.calibrated:
+        print(
+            "win probability: parameters are uncalibrated -- not published",
+            flush=True,
+        )
+        return None
+    print(
+        f"win probability: calibrated, {parameters.form} SD, "
+        f"lambda {parameters.margin_sd_multiplier:.3f}",
+        flush=True,
+    )
+    return parameters
+
+
 def build_bundle(
     season: int,
     total_weeks: int,
@@ -1622,6 +1701,7 @@ def build_bundle(
         n0_by_position={}, default_n0=DEFAULT_N0
     )
     usage_parameters, usage = _load_usage_inputs(season)
+    win_parameters = _load_win_parameters()
 
     user = client.get_user(username)
     nfl_state = _nfl_state(client)
@@ -1859,16 +1939,21 @@ def build_bundle(
             lineup,
             opponent_optimal,
             comparison,
+            # FFA-114 is calibrated from week 2 on (cutoff >= 1); week 1's
+            # preseason-only projections were never scored against results.
+            win_parameters=win_parameters if cutoff >= 1 else None,
         )
         if matchup:
             mine, theirs = matchup["me"], matchup["opponent"]
             projected = (mine["projected_total"], theirs["projected_total"])
             live = (mine["points"], theirs["points"])
+            odds = matchup["win_probability"]
             print(
                 f"[{slug}]   matchup week {upcoming} vs "
                 f"{matchup['opponent']['owner']}: projected "
                 f"{projected[0]:.1f}-{projected[1]:.1f} "
-                f"(live {live[0]}-{live[1]}), phase {matchup['phase']}",
+                f"(live {live[0]}-{live[1]}), phase {matchup['phase']}"
+                + (f", win probability {odds['me']:.0%}" if odds else ""),
                 flush=True,
             )
         else:
