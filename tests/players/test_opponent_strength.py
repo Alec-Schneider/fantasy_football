@@ -7,6 +7,8 @@ in the module docstring's worked example.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pandas as pd
 import pytest
 
@@ -20,6 +22,7 @@ from fantasy_analyzer.players.opponent_strength import (
     completed_nfl_weeks,
     normalize_schedule,
     normalize_team,
+    started_nfl_teams,
 )
 
 # A two-team, three-week toy league. Each team has one bye.
@@ -440,3 +443,75 @@ def test_matchup_context_empty_inputs() -> None:
     )
     assert len(no_schedule) == len(RANKINGS)
     assert no_schedule["week_opponent"].isna().all()
+
+
+# --------------------------------------------------------------------------
+# started_nfl_teams -- game locks
+# --------------------------------------------------------------------------
+
+
+def _game(week, home, away, gameday, gametime, scored=False, game_type="REG"):
+    return {
+        "season": 2026,
+        "game_type": game_type,
+        "week": week,
+        "home_team": home,
+        "away_team": away,
+        "gameday": gameday,
+        "gametime": gametime,
+        "home_score": 27.0 if scored else float("nan"),
+        "away_score": 24.0 if scored else float("nan"),
+    }
+
+
+# Week 4 of 2026 in miniature: Thursday night, a London morning game,
+# Sunday 1 pm, Monday night. Times are US Eastern, as nflverse states them.
+LOCK_WEEK = pd.DataFrame(
+    [
+        _game(4, "CLE", "PIT", "2026-10-01", "20:15", scored=True),
+        _game(4, "WAS", "IND", "2026-10-04", "09:30"),
+        _game(4, "BAL", "TEN", "2026-10-04", "13:00"),
+        _game(4, "NO", "ATL", "2026-10-05", "20:15"),
+        _game(3, "GB", "ATL", "2026-09-24", "20:15", scored=True),
+    ]
+)
+
+
+def test_started_nfl_teams_after_thursday_night() -> None:
+    """Saturday: only the Thursday game has started; week 3 is ignored."""
+    saturday = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
+    assert started_nfl_teams(LOCK_WEEK, 2026, 4, saturday) == {"CLE", "PIT"}
+
+
+def test_started_nfl_teams_reads_kickoff_in_eastern_time() -> None:
+    """9:30 ET in October is 13:30 UTC; an unscored game in progress counts.
+
+    One minute before kickoff the London game is open; at kickoff it is
+    locked, scores or not.
+    """
+    before = datetime(2026, 10, 4, 13, 29, tzinfo=timezone.utc)
+    at = datetime(2026, 10, 4, 13, 30, tzinfo=timezone.utc)
+    assert started_nfl_teams(LOCK_WEEK, 2026, 4, before) == {"CLE", "PIT"}
+    assert started_nfl_teams(LOCK_WEEK, 2026, 4, at) == {"CLE", "PIT", "WAS", "IND"}
+
+
+def test_started_nfl_teams_counts_a_scored_game_whatever_the_clock() -> None:
+    """A final score locks a game even if the cached kickoff is later."""
+    early = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    assert started_nfl_teams(LOCK_WEEK, 2026, 4, early) == {"CLE", "PIT"}
+
+
+def test_started_nfl_teams_edge_inputs() -> None:
+    now = datetime(2026, 10, 3, tzinfo=timezone.utc)
+    assert started_nfl_teams(pd.DataFrame(), 2026, 4, now) == frozenset()
+    assert started_nfl_teams(LOCK_WEEK, 2026, 9, now) == frozenset()
+    assert started_nfl_teams(LOCK_WEEK, 2025, 4, now) == frozenset()
+    playoff = pd.DataFrame(
+        [_game(19, "KC", "BUF", "2027-01-10", "16:30", True, game_type="WC")]
+    )
+    assert started_nfl_teams(playoff, 2026, 19, now) == frozenset()
+    # No kickoff columns: the scores alone decide.
+    scores_only = LOCK_WEEK.drop(columns=["gameday", "gametime"])
+    assert started_nfl_teams(scores_only, 2026, 4, now) == {"CLE", "PIT"}
+    with pytest.raises(ValueError):
+        started_nfl_teams(LOCK_WEEK, 2026, 4, datetime(2026, 10, 3))

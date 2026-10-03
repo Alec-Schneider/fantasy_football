@@ -116,9 +116,13 @@ What this module does not do
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 import pandas as pd
+
+#: The timezone nflverse states ``gameday``/``gametime`` in.
+EASTERN_TIME = "America/New_York"
 
 #: Games of evidence at which a defense's raw defense-vs-position ratio and
 #: the no-adjustment null (1.0) carry equal weight. See the module
@@ -327,6 +331,68 @@ def completed_nfl_weeks(schedule: pd.DataFrame, season: int) -> list[int]:
     away = pd.to_numeric(games["away_score"], errors="coerce")
     scored = (home.notna() & away.notna()).groupby(games["week"]).all()
     return sorted(int(week) for week, done in scored.items() if done)
+
+
+def started_nfl_teams(
+    schedule: pd.DataFrame, season: int, week: int, now: datetime
+) -> frozenset[str]:
+    """Teams whose ``week`` game has kicked off by ``now``: locked in Sleeper.
+
+    Once a player's game starts, Sleeper locks him for the week: he cannot
+    be moved into or out of a lineup, added or dropped. A lineup call or an
+    add/drop made between Thursday night and Monday night has to know who
+    is locked, and this is that set.
+
+    A game counts as started if it has a final score (both ``home_score``
+    and ``away_score``) or if its kickoff -- ``gameday`` plus ``gametime``,
+    which nflverse states in US Eastern time -- is at or before ``now``.
+    The score test alone would miss a game in progress; the kickoff test
+    alone would depend on the cached schedule's times never being stale.
+
+    Regular season only, matching :func:`completed_nfl_weeks`.
+
+    Args:
+        schedule: nflverse's one-row-per-game table (the ``games`` input to
+            :func:`normalize_schedule`, not its output).
+        season: The season to inspect.
+        week: The NFL week to inspect.
+        now: The moment to judge kickoffs against. Must be timezone-aware.
+
+    Returns:
+        The started games' teams, in nflverse spelling (compare a Sleeper
+        team through :func:`normalize_team`). Empty if ``schedule`` is empty
+        or lacks the team columns.
+
+    Raises:
+        ValueError: If ``now`` is naive.
+    """
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    required = {"season", "week", "home_team", "away_team"}
+    if schedule.empty or not required <= set(schedule.columns):
+        return frozenset()
+
+    games = schedule[(schedule["season"] == season) & (schedule["week"] == week)]
+    if "game_type" in games.columns:
+        games = games[games["game_type"] == "REG"]
+    if games.empty:
+        return frozenset()
+
+    started = pd.Series(False, index=games.index)
+    if {"home_score", "away_score"} <= set(games.columns):
+        started |= (
+            pd.to_numeric(games["home_score"], errors="coerce").notna()
+            & pd.to_numeric(games["away_score"], errors="coerce").notna()
+        )
+    if {"gameday", "gametime"} <= set(games.columns):
+        kickoff = pd.to_datetime(
+            games["gameday"].astype(str) + " " + games["gametime"].astype(str),
+            errors="coerce",
+        ).dt.tz_localize(EASTERN_TIME, ambiguous="NaT", nonexistent="NaT")
+        started |= kickoff.notna() & (kickoff <= pd.Timestamp(now))
+
+    games = games[started]
+    return frozenset(games["home_team"]) | frozenset(games["away_team"])
 
 
 def build_defense_vs_position(
