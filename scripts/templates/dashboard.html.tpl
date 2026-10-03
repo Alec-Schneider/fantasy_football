@@ -21,6 +21,8 @@
     --pos-soft: #d7ebe2;
     --neg: #9e3639;
     --neg-soft: #f4dedd;
+    --wp-me: #1f3a5f;
+    --wp-opp: #b3beca;
     --shadow: 0 1px 2px rgba(18, 26, 34, .06), 0 8px 24px -16px rgba(18, 26, 34, .3);
 
     --display: "Bricolage Grotesque", "Trebuchet MS", sans-serif;
@@ -47,6 +49,8 @@
       --pos-soft: #14302a;
       --neg: #e4746f;
       --neg-soft: #35201f;
+      --wp-me: #85adda;
+      --wp-opp: #4a5967;
       --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 8px 24px -16px rgba(0, 0, 0, .8);
     }
   }
@@ -69,10 +73,14 @@
     --pos-soft: #14302a;
     --neg: #e4746f;
     --neg-soft: #35201f;
+    --wp-me: #85adda;
+    --wp-opp: #4a5967;
     --shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 8px 24px -16px rgba(0, 0, 0, .8);
   }
 
   * { box-sizing: border-box; }
+
+  [hidden] { display: none !important; }
 
   body {
     margin: 0;
@@ -164,7 +172,8 @@
 
   .seg button:hover { color: var(--ink); }
 
-  .seg button[aria-pressed="true"] {
+  .seg button[aria-pressed="true"],
+  .seg button[aria-selected="true"] {
     background: var(--accent);
     color: var(--accent-ink);
   }
@@ -596,6 +605,294 @@
   .move .gain small { display: block; font-size: 10px; font-weight: 400; color: var(--muted); text-align: right; }
   .move .detail { display: block; font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 2px; }
 
+  /* ---------- matchup tab ---------- */
+
+  .mx > .phase:first-child { margin-top: 26px; }
+
+  .sb {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .tcard {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  .tcard.mine {
+    border-left: 4px solid var(--accent);
+    box-shadow: var(--shadow);
+  }
+
+  .tcard .who {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+
+  .tcard .tname {
+    font-weight: 800;
+    font-size: clamp(15px, 2.8vw, 21px);
+    letter-spacing: -.02em;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+  }
+
+  .tcard .rec {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tcard .score {
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: clamp(28px, 6vw, 42px);
+    line-height: 1.1;
+    margin-top: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tcard .sub2 {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tcard .sub2 b { color: var(--ink-2); font-weight: 600; }
+
+  .wp { margin-top: 10px; padding: 14px 16px; }
+
+  .wp .status {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+
+  .wp .lbls {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    margin-bottom: 5px;
+  }
+
+  .wp .split {
+    display: flex;
+    height: 12px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--wp-opp);
+  }
+
+  .wp .split i { display: block; background: var(--wp-me); }
+
+  .wp .margin {
+    margin-top: 8px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .wp .margin b { color: var(--ink); font-weight: 600; }
+
+  .h2h { overflow: hidden; }
+
+  .h2h-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 64px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .h2h-row:last-child { border-bottom: 0; }
+  .h2h-row.edge-me { background: var(--pos-soft); }
+  .h2h-row.edge-opp { background: var(--neg-soft); }
+
+  .h2h-head {
+    background: var(--surface-2);
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .h2h-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .h2h-head .mid { text-align: center; }
+
+  .h2h-row .mid {
+    text-align: center;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .h2h-row .mid .sl { font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--ink-2); }
+  .h2h-row .mid .ed { display: block; font-size: 10px; color: var(--muted); }
+
+  .hs { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .hs .nm { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .hs .nm b { font-weight: 600; font-size: 14px; }
+  .hs .nm .meta { display: block; font-size: 11px; color: var(--muted); font-family: var(--mono); }
+  .hs.gap .nm { color: var(--muted); font-style: italic; }
+
+  .hs .nums {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    min-width: 46px;
+  }
+
+  .hs.opp { flex-direction: row-reverse; }
+  .hs.opp .nums { text-align: left; }
+  .hs.mine .nm { text-align: right; }
+  .hs .nums .p { display: block; font-size: 13.5px; font-weight: 600; }
+  .hs .nums .a { display: block; font-size: 11px; color: var(--muted); }
+
+  .pill.live { background: var(--pos-soft); color: var(--pos); }
+
+  .edges { padding: 6px 14px; }
+
+  .edge-row {
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr) 54px 92px;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .edge-row .g { font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--ink-2); }
+  .edge-row .track { height: 16px; }
+  .edge-row .v { font-size: 12.5px; font-weight: 600; text-align: right; }
+  .edge-row .vals { font-size: 11px; color: var(--muted); text-align: right; white-space: nowrap; }
+
+  .alerts { overflow: hidden; }
+
+  .alert {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    font-size: 13.5px;
+  }
+
+  .alert:last-child { border-bottom: 0; }
+
+  .alert .who {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    width: 54px;
+    flex: none;
+  }
+
+  .alert .txt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .alert .txt .sub { margin-left: 4px; }
+
+  .alert button {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .05em;
+    color: var(--accent);
+    background: none;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    padding: 3px 11px;
+    cursor: pointer;
+  }
+
+  .alert.ok { color: var(--muted); }
+
+  .stats td.best { font-weight: 700; color: var(--pos); }
+  .stats td.l { min-width: 0; white-space: nowrap; }
+  .stats td { color: var(--ink-2); }
+  .stats th.l { text-align: left; }
+
+  .cmp-gap { margin-top: 12px; }
+
+  .meetings {
+    margin-top: 12px;
+    padding: 12px 14px;
+    font-size: 13.5px;
+  }
+
+  .meetings .gm {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding-top: 6px;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+  }
+
+  details.benches { margin-bottom: 26px; }
+
+  details.benches summary {
+    cursor: pointer;
+    padding: 12px 14px;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  details.benches summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .halves {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    border-top: 1px solid var(--line);
+  }
+
+  .halves > div + div { border-left: 1px solid var(--line); }
+
+  .halves h4 {
+    margin: 0;
+    padding: 10px 14px 4px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .halves .slot { flex-wrap: wrap; }
+  .halves .slot .nm { overflow-wrap: anywhere; }
+
   /* ---------- notes ---------- */
 
   .notes {
@@ -646,6 +943,24 @@
     .me { gap: 14px 22px; }
     .brand { width: 100%; margin-right: 0; }
   }
+
+  @media (max-width: 560px) {
+    .wrap, .bar-inner { padding-inline: 16px; }
+    .tcard { padding: 12px 12px; }
+    .h2h-row { grid-template-columns: minmax(0, 1fr) 40px minmax(0, 1fr); gap: 6px; padding: 8px 8px; }
+    .hs, .hs.opp { flex-direction: column; align-items: flex-start; gap: 2px; }
+    .hs .nm b { font-size: 13px; }
+    .hs .nm .meta { font-size: 10.5px; }
+    .hs .nums, .hs.opp .nums { text-align: left; display: flex; gap: 6px; align-items: baseline; }
+    .hs.mine { align-items: flex-end; }
+    .h2h-row .mid .sl { font-size: 10px; letter-spacing: 0; }
+    .edge-row { grid-template-columns: 44px minmax(0, 1fr) 48px; }
+    .edge-row .vals { display: none; }
+    .alert .who { width: 100%; }
+    .halves { grid-template-columns: 1fr; }
+    .halves > div + div { border-left: 0; border-top: 1px solid var(--line); }
+    .stats td, .stats th { padding-inline: 6px; }
+  }
 </style>
 
 <div class="bar">
@@ -654,8 +969,12 @@
       <b>The Schneid Desk</b>
       <span id="asof">—</span>
     </div>
+    <div class="seg" id="tabs" role="tablist" aria-label="View">
+      <button type="button" role="tab" id="tab-matchup" aria-controls="panel-matchup" aria-selected="true">Matchup</button>
+      <button type="button" role="tab" id="tab-season" aria-controls="panel-season" aria-selected="false" tabindex="-1">Season</button>
+    </div>
     <div class="seg" id="leagues" role="group" aria-label="League"></div>
-    <div class="stepper">
+    <div class="stepper" id="stepper" hidden>
       <button id="prev" type="button" aria-label="Previous week">&#8249;</button>
       <span class="label" id="weeklabel">Week —</span>
       <button id="next" type="button" aria-label="Next week">&#8250;</button>
@@ -664,6 +983,9 @@
 </div>
 
 <div class="wrap">
+<div id="panel-matchup" class="mx" role="tabpanel" aria-labelledby="tab-matchup"></div>
+
+<div id="panel-season" role="tabpanel" aria-labelledby="tab-season" hidden>
   <div class="me" id="me"></div>
 
   <div class="phase">
@@ -714,6 +1036,7 @@
   </section>
 
   <div class="notes" id="notes"></div>
+</div>
 </div>
 
 <script type="application/json" id="bundle">{{DATA}}</script>
@@ -1320,6 +1643,489 @@
     });
   }
 
+  // ---- matchup tab -------------------------------------------------
+
+  var SLOT_NAMES = { SUPER_FLEX: "SFLX", WRRB_FLEX: "W/R", REC_FLEX: "W/T", FLEX: "FLEX" };
+
+  function slotName(s) {
+    if (!s) { return "—"; }
+    return SLOT_NAMES[s] || String(s);
+  }
+
+  function teamLabel(lg, side) {
+    var t = (lg.teams || []).filter(function (x) { return x.roster_id === side.roster_id; })[0];
+    if (t) { return label(t); }
+    return side.team_name || side.owner || ("Roster " + side.roster_id);
+  }
+
+  function recordText(ts) {
+    return Math.round(ts.wins || 0) + "–" + Math.round(ts.losses || 0) + (ts.ties ? "–" + Math.round(ts.ties) : "");
+  }
+
+  function mxSection(title, sub) {
+    var s = el("section");
+    var h = el("h3", null, title);
+    if (sub) { h.appendChild(el("span", "sub", " " + sub)); }
+    s.appendChild(h);
+    return s;
+  }
+
+  function mxEmpty(host, headline, reason) {
+    host.appendChild(el("div", "empty", headline));
+    var r = el("div", "empty", reason);
+    r.style.paddingTop = "0";
+    host.appendChild(r);
+  }
+
+  function statusLine(mu) {
+    var g = mu.nfl_games || {};
+    var bits = [mu.phase === "live" ? "Live" : "Pre-game"];
+    if (mu.phase === "live" && has(g.final) && has(g.total)) {
+      bits.push(g.final + " of " + g.total + " NFL games final");
+    } else if (has(g.total)) {
+      bits.push(g.total + " NFL games this week");
+    }
+    return bits.join(" · ");
+  }
+
+  function teamCard(lg, side, ts, mine) {
+    var c = el("div", "tcard" + (mine ? " mine" : ""));
+    c.appendChild(el("div", "who", side.owner || "—"));
+    c.appendChild(el("div", "tname", teamLabel(lg, side)));
+    c.appendChild(el("div", "rec", ts ? recordText(ts) + (has(ts.rank) ? " · #" + ts.rank + " of " + lg.total_rosters : "") : "No record yet"));
+    c.appendChild(el("div", "score", num(side.points, 1)));
+    var proj = el("div", "sub2");
+    proj.appendChild(document.createTextNode("proj "));
+    proj.appendChild(el("b", null, num(side.projected_total, 1)));
+    c.appendChild(proj);
+    var rem = side.players_remaining;
+    c.appendChild(el("div", "sub2", has(rem) ? rem + " to play" : "—"));
+    return c;
+  }
+
+  function renderScoreboard(host, lg, mu) {
+    var sec = mxSection("Scoreboard");
+    var cmp = mu.comparison;
+    var grid = el("div", "sb");
+    grid.appendChild(teamCard(lg, mu.me, cmp && cmp.me, true));
+    grid.appendChild(teamCard(lg, mu.opponent, cmp && cmp.opponent, false));
+    sec.appendChild(grid);
+
+    var wp = el("div", "panel wp");
+    wp.appendChild(el("div", "status", statusLine(mu)));
+    var prob = mu.win_probability;
+    var margin = prob && has(prob.projected_margin)
+      ? prob.projected_margin
+      : (has(mu.me.projected_total) && has(mu.opponent.projected_total) ? mu.me.projected_total - mu.opponent.projected_total : null);
+
+    if (prob && has(prob.me) && has(prob.opponent)) {
+      var mePct = Math.max(0, Math.min(100, Number(prob.me) * 100));
+      var lb = el("div", "lbls");
+      lb.appendChild(el("span", null, "You " + Math.round(mePct) + "%"));
+      lb.appendChild(el("span", null, Math.round(Number(prob.opponent) * 100) + "% Opp"));
+      wp.appendChild(lb);
+      var split = el("div", "split");
+      split.setAttribute("role", "img");
+      split.setAttribute("aria-label", "Win probability " + Math.round(mePct) + " percent you, " + Math.round(100 - mePct) + " percent opponent");
+      var seg = el("i");
+      seg.style.width = mePct + "%";
+      split.appendChild(seg);
+      wp.appendChild(split);
+    }
+    var mg = el("div", "margin");
+    mg.appendChild(document.createTextNode("Projected margin "));
+    mg.appendChild(el("b", null, signed(margin, 1)));
+    if (prob && has(prob.margin_sd)) { mg.appendChild(document.createTextNode(" ± " + num(prob.margin_sd, 1))); }
+    if (!prob) { mg.appendChild(document.createTextNode(" · no win probability yet")); }
+    wp.appendChild(mg);
+    sec.appendChild(wp);
+    host.appendChild(sec);
+  }
+
+  function gameChip(r) {
+    var st = r.game_state;
+    if (st === "in_progress") { return el("span", "pill live", "Live"); }
+    if (st === "final") { return el("span", "pill lock", "Final"); }
+    if (st === "bye") { return el("span", "pill bye", "Bye"); }
+    if (st === "scheduled") {
+      var txt = "Scheduled";
+      if (r.kickoff) {
+        var d = new Date(r.kickoff);
+        if (!isNaN(d.getTime())) {
+          txt = d.toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+        }
+      }
+      return el("span", "pill lock", txt);
+    }
+    return null;
+  }
+
+  function slotSide(r, cls) {
+    var side = el("div", "hs " + cls);
+    var nm = el("div", "nm");
+    if (!r || !r.player_id) {
+      side.className += " gap";
+      nm.appendChild(document.createTextNode("Empty"));
+      side.appendChild(nm);
+      return side;
+    }
+    nm.appendChild(el("b", null, playerName(r)));
+    addPill(nm, injuryPill(r));
+    var meta = [(r.position || "—") + " · " + (r.team || "FA")];
+    if (r.nfl_opponent) { meta.push((r.is_home ? "vs " : "@") + r.nfl_opponent); }
+    var metaEl = el("span", "meta", meta.join(" · "));
+    addPill(metaEl, gameChip(r));
+    nm.appendChild(metaEl);
+
+    var nums = el("div", "nums");
+    var p = el("span", "p", num(r.projection, 1));
+    p.title = "Projection";
+    nums.appendChild(p);
+    if (has(r.actual_points)) {
+      var a = el("span", "a", num(r.actual_points, 1) + " pts");
+      a.title = "Actual points so far";
+      nums.appendChild(a);
+    }
+    side.appendChild(nums);
+    side.appendChild(nm);
+    return side;
+  }
+
+  function renderHeadToHead(host, lg, mu) {
+    var sec = mxSection("Lineups, head to head", "projection · actual");
+    var panel = el("div", "panel h2h");
+    var head = el("div", "h2h-row h2h-head");
+    head.appendChild(el("span", null, teamLabel(lg, mu.me)));
+    head.appendChild(el("span", "mid", "Slot"));
+    head.appendChild(el("span", null, teamLabel(lg, mu.opponent)));
+    panel.appendChild(head);
+
+    var mine = mu.me.starters || [];
+    var theirs = mu.opponent.starters || [];
+    var n = Math.max(mine.length, theirs.length);
+    if (!n) { panel.appendChild(el("div", "empty", "No starting slots to compare.")); }
+    for (var i = 0; i < n; i++) {
+      var a = mine[i] || null;
+      var b = theirs[i] || null;
+      var edge = a && b && has(a.expected_points) && has(b.expected_points) ? a.expected_points - b.expected_points : null;
+      var cls = "h2h-row";
+      if (edge !== null && edge >= 1) { cls += " edge-me"; }
+      else if (edge !== null && edge <= -1) { cls += " edge-opp"; }
+      var row = el("div", cls);
+      row.appendChild(slotSide(a, "mine"));
+      var mid = el("div", "mid");
+      mid.appendChild(el("span", "sl", slotName((a && a.slot) || (b && b.slot))));
+      mid.appendChild(el("span", "ed", edge === null ? "" : signed(edge, 1)));
+      row.appendChild(mid);
+      row.appendChild(slotSide(b, "opp"));
+      panel.appendChild(row);
+    }
+    sec.appendChild(panel);
+    host.appendChild(sec);
+  }
+
+  function renderPositionalEdge(host, lg, mu) {
+    var sec = mxSection("Positional edge", "projected points, you minus opponent");
+    var rows = mu.position_edges || [];
+    var panel = el("div", "panel edges");
+    if (!rows.length) {
+      panel.appendChild(el("div", "empty", "No positional comparison available."));
+    }
+    var max = 1;
+    rows.forEach(function (r) { if (has(r.edge)) { max = Math.max(max, Math.abs(r.edge)); } });
+    rows.forEach(function (r) {
+      var row = el("div", "edge-row");
+      row.appendChild(el("span", "g", r.group));
+      var track = el("div", "track");
+      var bar = el("i");
+      var v = has(r.edge) ? Number(r.edge) : 0;
+      bar.style.width = (Math.abs(v) / max * 50) + "%";
+      if (v >= 0) { bar.style.left = "50%"; bar.style.background = "var(--pos)"; }
+      else { bar.style.right = "50%"; bar.style.background = "var(--neg)"; }
+      track.appendChild(bar);
+      row.appendChild(track);
+      row.appendChild(el("span", "v " + (v > 0 ? "pos" : v < 0 ? "neg" : ""), signed(r.edge, 1)));
+      row.appendChild(el("span", "vals", num(r.me, 1) + " vs " + num(r.opponent, 1)));
+      panel.appendChild(row);
+    });
+    sec.appendChild(panel);
+    host.appendChild(sec);
+  }
+
+  function alertSeverity(reason) {
+    return /^(Questionable|Probable|Doubtful)$/.test(String(reason)) ? "pill q" : "pill out";
+  }
+
+  function alertRow(who, nodes) {
+    var row = el("div", "alert");
+    row.appendChild(el("span", "who", who));
+    var txt = el("div", "txt");
+    nodes.forEach(function (n) { txt.appendChild(typeof n === "string" ? document.createTextNode(n) : n); });
+    row.appendChild(txt);
+    return row;
+  }
+
+  function renderAlerts(host, lg, mu) {
+    var sec = mxSection("Alerts");
+    var panel = el("div", "panel alerts");
+    var count = 0;
+
+    function addAlerts(who, list) {
+      (list || []).forEach(function (a) {
+        var nodes = [el("strong", null, a.full_name || (a.reason === "Empty slot" ? "Empty slot" : playerName(a)))];
+        if (a.slot) { nodes.push(el("span", "sub", " " + slotName(a.slot))); }
+        nodes.push(" ");
+        nodes.push(el("span", alertSeverity(a.reason), a.reason || "Issue"));
+        panel.appendChild(alertRow(who, nodes));
+        count++;
+      });
+    }
+    addAlerts("You", mu.me.alerts);
+
+    if (has(mu.my_recommended_gain) && mu.my_recommended_gain > 0.05) {
+      var row = alertRow("You", ["Recommended lineup projects ", el("strong", "pos", "+" + num(mu.my_recommended_gain, 1))]);
+      var btn = el("button", null, "See lineup call");
+      btn.type = "button";
+      btn.addEventListener("click", function () {
+        setTab("season", true);
+        var t = document.getElementById("lineup");
+        if (t && t.scrollIntoView) { t.scrollIntoView({ block: "start" }); }
+      });
+      row.appendChild(btn);
+      panel.appendChild(row);
+      count++;
+    }
+
+    addAlerts("Opp", mu.opponent.alerts);
+
+    var opp = mu.opponent;
+    if (has(opp.optimal_total) && has(opp.projected_total) && opp.optimal_total - opp.projected_total > 0.05) {
+      panel.appendChild(alertRow("Opp", ["Leaving ", el("strong", "neg", num(opp.optimal_total - opp.projected_total, 1)),
+        " on the bench (best lineup " + num(opp.optimal_total, 1) + " vs " + num(opp.projected_total, 1) + " set)"]));
+      count++;
+    }
+
+    if (!count) {
+      var ok = el("div", "alert ok", "No lineup issues");
+      panel.appendChild(ok);
+    }
+    sec.appendChild(panel);
+    host.appendChild(sec);
+  }
+
+  // [label, getter, how to compare: "hi" / "lo" / null]
+  function winPct(ts) {
+    var g = (ts.wins || 0) + (ts.losses || 0) + (ts.ties || 0);
+    return g ? ((ts.wins || 0) + 0.5 * (ts.ties || 0)) / g : null;
+  }
+
+  function allPlayPct(ts) {
+    var g = (ts.all_play_wins || 0) + (ts.all_play_losses || 0) + (ts.all_play_ties || 0);
+    return g ? ((ts.all_play_wins || 0) + 0.5 * (ts.all_play_ties || 0)) / g : null;
+  }
+
+  var STAT_ROWS = [
+    ["Record", function (t) { return recordText(t); }, winPct, "hi"],
+    ["Rank", function (t) { return has(t.rank) ? "#" + t.rank : "—"; }, function (t) { return t.rank; }, "lo"],
+    ["Points for", function (t) { return num(t.points_for, 1); }, function (t) { return t.points_for; }, "hi"],
+    ["Points against", function (t) { return num(t.points_against, 1); }, function (t) { return t.points_against; }, "lo"],
+    ["PPG", function (t) { return num(t.ppg, 1); }, function (t) { return t.ppg; }, "hi"],
+    ["Last 3 PPG", function (t) { return num(t.last3_ppg, 1); }, function (t) { return t.last3_ppg; }, "hi"],
+    ["High", function (t) { return num(t.high, 1); }, function (t) { return t.high; }, "hi"],
+    ["Low", function (t) { return num(t.low, 1); }, function (t) { return t.low; }, "hi"],
+    ["Weekly SD", function (t) { return num(t.stdev_points, 1); }, null, null],
+    ["All-play", function (t) {
+      return Math.round(t.all_play_wins || 0) + "–" + Math.round(t.all_play_losses || 0) + (t.all_play_ties ? "–" + Math.round(t.all_play_ties) : "");
+    }, allPlayPct, "hi"],
+    ["Power rank", function (t) { return has(t.power_rank) ? "#" + t.power_rank : "—"; }, function (t) { return t.power_rank; }, "lo"]
+  ];
+
+  // Returns "me", "opp" or null: who holds the better value.
+  function betterSide(a, b, how) {
+    if (!how || !has(a) || !has(b) || Number(a) === Number(b)) { return null; }
+    var meBetter = how === "hi" ? Number(a) > Number(b) : Number(a) < Number(b);
+    return meBetter ? "me" : "opp";
+  }
+
+  function renderComparison(host, lg, mu) {
+    var cmp = mu.comparison;
+    var sec = mxSection("Season comparison", cmp && has(cmp.through_week) ? "through week " + cmp.through_week : "");
+    if (!cmp || !cmp.me || !cmp.opponent) {
+      var p0 = el("div", "panel");
+      p0.appendChild(el("div", "empty", "No completed weeks yet"));
+      sec.appendChild(p0);
+      host.appendChild(sec);
+      return;
+    }
+
+    var wrap = el("div", "panel scroll stats");
+    var t = el("table");
+    table(t, [{ t: "Stat", cls: "l" }, { t: teamLabel(lg, mu.me) }, { t: teamLabel(lg, mu.opponent) }], STAT_ROWS, function (d) {
+      var tr = el("tr");
+      tr.appendChild(el("td", "l", d[0]));
+      var best = d[2] ? betterSide(d[2](cmp.me), d[2](cmp.opponent), d[3]) : null;
+      tr.appendChild(el("td", best === "me" ? "best" : null, d[1](cmp.me)));
+      tr.appendChild(el("td", best === "opp" ? "best" : null, d[1](cmp.opponent)));
+      return tr;
+    });
+    wrap.appendChild(t);
+    sec.appendChild(wrap);
+
+    var positions = cmp.positions || [];
+    if (positions.length) {
+      var wrap2 = el("div", "panel scroll stats cmp-gap");
+      var t2 = el("table");
+      table(t2, [{ t: "Pos", cls: "l" }, { t: "You PPG" }, { t: "Rank" }, { t: "Opp PPG" }, { t: "Rank" }], positions, function (r) {
+        var tr = el("tr");
+        var best = betterSide(r.me_ppg, r.opponent_ppg, "hi");
+        tr.appendChild(el("td", "l", r.position));
+        tr.appendChild(el("td", best === "me" ? "best" : null, num(r.me_ppg, 1)));
+        tr.appendChild(el("td", "rk", has(r.me_rank) ? "#" + r.me_rank : "—"));
+        tr.appendChild(el("td", best === "opp" ? "best" : null, num(r.opponent_ppg, 1)));
+        tr.appendChild(el("td", "rk", has(r.opponent_rank) ? "#" + r.opponent_rank : "—"));
+        return tr;
+      });
+      wrap2.appendChild(t2);
+      sec.appendChild(wrap2);
+    }
+
+    var h2h = cmp.head_to_head;
+    var meet = el("div", "panel meetings");
+    if (h2h && h2h.meetings > 0) {
+      meet.appendChild(el("div", null, "This season: " + (h2h.wins || 0) + "–" + (h2h.losses || 0) + (h2h.ties ? "–" + h2h.ties : "") +
+        " in " + h2h.meetings + (h2h.meetings === 1 ? " meeting" : " meetings")));
+      (h2h.games || []).forEach(function (g) {
+        var line = el("div", "gm");
+        line.appendChild(el("span", null, "Week " + g.week));
+        line.appendChild(el("span", null, num(g.points, 1) + "–" + num(g.opponent_points, 1)));
+        meet.appendChild(line);
+      });
+    } else {
+      meet.appendChild(el("div", null, "No meetings yet this season."));
+    }
+    sec.appendChild(meet);
+    host.appendChild(sec);
+  }
+
+  function benchColumn(title, rows) {
+    var col = el("div");
+    col.appendChild(el("h4", null, title));
+    if (!rows.length) { col.appendChild(el("div", "empty", "Empty bench")); }
+    rows.forEach(function (r) {
+      var row = el("div", "slot");
+      row.appendChild(el("span", "pos-tag", slotName(r.slot)));
+      var nm = el("div", "nm");
+      nm.appendChild(el("b", null, playerName(r)));
+      addPill(nm, injuryPill(r));
+      addPill(nm, gameChip(r));
+      var meta = [(r.position || "—") + " · " + (r.team || "FA")];
+      if (r.nfl_opponent) { meta.push((r.is_home ? "vs " : "@") + r.nfl_opponent); }
+      nm.appendChild(el("span", "meta", meta.join(" · ")));
+      row.appendChild(nm);
+      row.appendChild(el("span", "pp", num(r.projection, 1)));
+      col.appendChild(row);
+    });
+    return col;
+  }
+
+  function renderBenches(host, lg, mu) {
+    var mine = mu.me.bench || [];
+    var theirs = mu.opponent.bench || [];
+    var d = el("details", "panel benches");
+    d.appendChild(el("summary", null, "Benches · " + mine.length + " and " + theirs.length));
+    var halves = el("div", "halves");
+    halves.appendChild(benchColumn(teamLabel(lg, mu.me), mine));
+    halves.appendChild(benchColumn(teamLabel(lg, mu.opponent), theirs));
+    d.appendChild(halves);
+    host.appendChild(d);
+  }
+
+  function renderMatchup(lg) {
+    var host = document.getElementById("panel-matchup");
+    host.innerHTML = "";
+    var mu = lg.matchup;
+    var wkNo = has(lg.upcoming_week) ? lg.upcoming_week : "—";
+
+    if (!mu || !mu.me || !mu.opponent) {
+      var ph = el("div", "phase");
+      ph.appendChild(el("h2", null, "Week " + wkNo));
+      ph.appendChild(el("span", "tag", "this week's matchup"));
+      host.appendChild(ph);
+      var box = el("div", "panel");
+      var reason = !("matchup" in lg)
+        ? "This bundle was built without matchup data. Rebuild the dashboard to add it."
+        : lg.upcoming_matchup
+        ? "The matchup data for this week is unavailable."
+        : "No opponent was found for your roster: a bye week, or the schedule is not posted yet.";
+      mxEmpty(box, "No matchup this week", reason);
+      host.appendChild(box);
+      return;
+    }
+
+    var ph2 = el("div", "phase");
+    ph2.appendChild(el("h2", null, "Week " + (has(mu.week) ? mu.week : wkNo)));
+    ph2.appendChild(el("span", "tag", "you vs " + (mu.opponent.owner || "opponent")));
+    host.appendChild(ph2);
+
+    // Sections fail independently: a malformed one is replaced by a notice.
+    [renderScoreboard, renderHeadToHead, renderPositionalEdge, renderAlerts, renderComparison, renderBenches]
+      .forEach(function (fn) {
+        var tmp = el("div");
+        try {
+          fn(tmp, lg, mu);
+        } catch (e) {
+          var bad = el("div", "panel");
+          bad.style.marginBottom = "26px";
+          bad.appendChild(el("div", "empty", "This section could not be shown."));
+          host.appendChild(bad);
+          return;
+        }
+        while (tmp.firstChild) { host.appendChild(tmp.firstChild); }
+      });
+  }
+
+  // ---- tabs --------------------------------------------------------
+
+  var TABS = ["matchup", "season"];
+  var tab = "matchup";
+
+  try {
+    var savedTab = localStorage.getItem("schneid-desk-tab");
+    if (TABS.indexOf(savedTab) >= 0) { tab = savedTab; }
+  } catch (e) { /* private window or blocked storage: default to Matchup */ }
+
+  function applyTab() {
+    TABS.forEach(function (name) {
+      var on = name === tab;
+      var b = document.getElementById("tab-" + name);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+      b.tabIndex = on ? 0 : -1;
+      document.getElementById("panel-" + name).hidden = !on;
+    });
+    document.getElementById("stepper").hidden = tab !== "season";
+  }
+
+  function setTab(name, focus) {
+    if (TABS.indexOf(name) < 0) { return; }
+    tab = name;
+    try { localStorage.setItem("schneid-desk-tab", name); } catch (e) { /* ignore */ }
+    applyTab();
+    if (focus) { document.getElementById("tab-" + name).focus(); }
+  }
+
+  TABS.forEach(function (name, i) {
+    var b = document.getElementById("tab-" + name);
+    b.addEventListener("click", function () { setTab(name, false); });
+    b.addEventListener("keydown", function (ev) {
+      var to = null;
+      if (ev.key === "ArrowRight") { to = TABS[(i + 1) % TABS.length]; }
+      else if (ev.key === "ArrowLeft") { to = TABS[(i + TABS.length - 1) % TABS.length]; }
+      else if (ev.key === "Home") { to = TABS[0]; }
+      else if (ev.key === "End") { to = TABS[TABS.length - 1]; }
+      if (to) { ev.preventDefault(); setTab(to, true); }
+    });
+  });
+
   function render() {
     var lg = leagues[li];
     if (!lg) { return; }
@@ -1346,6 +2152,11 @@
     renderMoves(lg);
     renderWaivers(lg);
     renderNotes(lg);
+    try { renderMatchup(lg); } catch (e) {
+      var mxh = document.getElementById("panel-matchup");
+      mxh.innerHTML = "";
+      mxh.appendChild(el("div", "empty", "The matchup could not be shown for this league."));
+    }
   }
 
   var stamp = new Date(DATA.generated_at);
@@ -1355,6 +2166,7 @@
     });
 
   wi = (leagues[li] && leagues[li].weeks.length - 1) || 0;
+  applyTab();
   render();
 })();
 </script>
