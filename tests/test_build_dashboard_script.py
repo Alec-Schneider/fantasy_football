@@ -664,3 +664,119 @@ def test_moves_stream_for_holes_when_replacement_levels_exist() -> None:
     move = {row["player_id"]: row for row in lineup["add_drop"]}["f1"]
     assert move["best_drop_player_id"] == "b1"
     assert move["best_drop_marginal_value"] == pytest.approx(0.0)
+
+
+# --------------------------------------------------------------------------
+# Game locks: a Thursday night game has been played
+# --------------------------------------------------------------------------
+
+# r2 (Sleeper FLEX starter) and b1 (bench) play for PIT, whose game is over.
+LOCKED_PROJECTIONS = PROJECTIONS.assign(
+    team=PROJECTIONS["team"].where(~PROJECTIONS["player_id"].isin(["r2", "b1"]), "PIT")
+)
+LIVE_POINTS = {"r2": 7.5, "b1": 20.0, "q1": 0.0}
+
+
+def _locked_lineup(board=BOARD, projections=LOCKED_PROJECTIONS, roster=MY_ROSTER):
+    return build_dashboard._build_lineup(
+        ROSTER_POSITIONS,
+        roster,
+        projections,
+        board,
+        CATALOG,
+        BYES,
+        4,
+        6,
+        locked_teams=frozenset({"PIT"}),
+        live_points=LIVE_POINTS,
+    )
+
+
+def test_locked_starter_keeps_his_slot_and_banks_his_points() -> None:
+    """Unlocked, r2 would move to RB and b1 would take the FLEX (41.0).
+
+    Locked, r2 stays at FLEX with his actual 7.5 and b1 cannot come in, so
+    with r1 Out the RB slot has nobody: QB q1 20 + WR w2 8 + FLEX 7.5.
+    """
+    lineup = _locked_lineup()
+    assert lineup["slot_order"] == [
+        {"slot": "QB", "player_id": "q1"},
+        {"slot": "RB", "player_id": None},
+        {"slot": "WR", "player_id": "w2"},
+        {"slot": "FLEX", "player_id": "r2"},
+    ]
+    assert lineup["locked_points"] == pytest.approx(7.5)
+    assert lineup["projected_points"] == pytest.approx(35.5)
+    assert lineup["locked_teams"] == ["PIT"]
+
+    starters = {row["player_id"]: row for row in lineup["recommended_starters"]}
+    assert starters["r2"]["locked"] is True
+    assert starters["r2"]["actual_points"] == pytest.approx(7.5)
+    assert starters["q1"]["locked"] is False
+
+    unavailable = {row["player_id"]: row for row in lineup["unavailable"]}
+    assert unavailable["b1"]["unavailable_reason"] == "Locked"
+    assert unavailable["b1"]["actual_points"] == pytest.approx(20.0)
+    assert "b1" not in {row["player_id"] for row in lineup["bench"]}
+
+
+def test_no_locks_matches_the_unlocked_lineup() -> None:
+    """An empty ``locked_teams`` is the old behavior exactly."""
+    plain = _lineup(projections=LOCKED_PROJECTIONS)
+    assert plain["slot_order"][3] == {"slot": "FLEX", "player_id": "b1"}
+    assert plain["projected_points"] == pytest.approx(41.0)
+    assert plain["locked_points"] is None
+
+
+def test_locked_players_are_never_added_or_dropped() -> None:
+    """f3 (PIT) has played and cannot be added; r2 and b1 cannot be dropped."""
+    board = pd.concat(
+        [
+            BOARD,
+            pd.DataFrame(
+                [
+                    {
+                        **_projection("f3", "WR", 16.0, team="PIT"),
+                        "board_rank": 3,
+                        "injury_status": None,
+                        "bye_week": None,
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    moves = {row["player_id"]: row for row in _locked_lineup(board=board)["add_drop"]}
+    assert set(moves) == {"f1"}
+    assert moves["f1"]["best_drop_player_id"] not in {"r2", "b1"}
+
+
+def test_kicker_swap_waits_while_the_rostered_kicker_is_locked() -> None:
+    """Every rostered kicker has played: no K move until the lock clears."""
+    projections = pd.concat(
+        [
+            LOCKED_PROJECTIONS[LOCKED_PROJECTIONS["player_id"] != "k1"],
+            pd.DataFrame(
+                [{**_projection("kA", "K", 9.0, team="PIT"), "lineup_ppg": 6.0}]
+            ),
+        ],
+        ignore_index=True,
+    )
+    roster = {
+        **MY_ROSTER,
+        "players": ["q1", "r1", "r2", "w1", "w2", "b1", "kA", "ir1"],
+        "starters": ["q1", "r1", "w1", "r2", "kA"],
+    }
+    board = pd.DataFrame(
+        [
+            {
+                **_projection("kF", "K", 12.0, team="DAL"),
+                "board_rank": 1,
+                "injury_status": None,
+                "bye_week": None,
+            }
+        ]
+    )
+    lineup = _locked_lineup(board=board, projections=projections, roster=roster)
+    assert lineup["add_drop"] == []
+    assert lineup["slot_order"][-1] == {"slot": "K", "player_id": "kA"}

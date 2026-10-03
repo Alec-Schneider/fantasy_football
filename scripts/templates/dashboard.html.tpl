@@ -505,6 +505,7 @@
   .pill.out { background: var(--neg-soft); color: var(--neg); }
   .pill.q { background: var(--surface-3); color: var(--brass); }
   .pill.bye { background: var(--surface-3); color: var(--muted); }
+  .pill.lock { background: var(--surface-3); color: var(--ink-2); }
   .pill.ir { background: var(--surface-3); color: var(--ink-2); }
   .pill.hot { background: var(--surface-3); color: var(--brass); }
   .pill.cold { background: var(--pos-soft); color: var(--pos); }
@@ -888,7 +889,11 @@
 
     var up = lg.upcoming_matchup;
     if (up && up.opponent) {
-      box.appendChild(stat("Week " + up.week + " vs", up.opponent, null));
+      // Live once any game has kicked off; both sides are 0.0 before that.
+      var live = (up.points || 0) > 0 || (up.opponent_points || 0) > 0
+        ? num(up.points, 1) + "–" + num(up.opponent_points, 1) + " so far"
+        : null;
+      box.appendChild(stat("Week " + up.week + " vs", up.opponent, live));
     }
   }
 
@@ -1046,7 +1051,8 @@
       return;
     }
 
-    sub.textContent = "week " + lg.upcoming_week + " · " + num(ln.projected_points, 1) + " projected";
+    sub.textContent = "week " + lg.upcoming_week + " · " + num(ln.projected_points, 1) + " projected" +
+      (has(ln.locked_points) ? " · " + num(ln.locked_points, 1) + " already in" : "");
 
     var byId = {};
     starters.forEach(function (p) { byId[p.player_id] = p; });
@@ -1064,16 +1070,17 @@
         host.appendChild(gap);
         return;
       }
-      var row = el("div", "slot" + (p.currently_starting ? "" : " swap"));
+      var row = el("div", "slot" + (p.currently_starting || p.locked ? "" : " swap"));
       row.appendChild(el("span", "pos-tag", s.slot || p.position));
       var nm = el("div", "nm");
       var b = el("b", null, playerName(p));
       b.title = modelTitle(p);
       nm.appendChild(b);
-      addPill(nm, injuryPill(p));
+      if (p.locked) { addPill(nm, el("span", "pill lock", "played")); }
+      addPill(nm, p.locked ? null : injuryPill(p));
       addPill(nm, luckPill(p));
-      if (p.projection_missing) { addPill(nm, el("span", "pill bye", "no projection")); }
-      if (!p.currently_starting) { addPill(nm, el("span", "pill start", "start")); }
+      if (p.projection_missing && !p.locked) { addPill(nm, el("span", "pill bye", "no projection")); }
+      if (!p.currently_starting && !p.locked) { addPill(nm, el("span", "pill start", "start")); }
       var meta = [(s.slot && s.slot !== p.position ? p.position + " · " : "") + (p.team || "FA")];
       if (isKdef(p)) {
         if (p.week_opponent) { meta.push("vs " + p.week_opponent); }
@@ -1083,9 +1090,10 @@
         var usage = usageLine(p);
         if (usage) { meta.push(usage); }
       }
+      if (p.locked) { meta.push("game over · locked in"); }
       nm.appendChild(el("span", "meta", meta.join(" · ")));
       row.appendChild(nm);
-      row.appendChild(el("span", "pp", num(weekPoints(p), 1)));
+      row.appendChild(el("span", "pp", num(p.locked ? p.actual_points : weekPoints(p), 1)));
       host.appendChild(row);
     });
 
@@ -1111,16 +1119,19 @@
       row.appendChild(el("span", "pos-tag", p.position));
       var nm = el("div", "nm");
       nm.appendChild(el("b", null, playerName(p)));
-      addPill(nm, injuryPill(p));
+      if (p.locked) { addPill(nm, el("span", "pill lock", "played")); }
+      addPill(nm, p.locked ? null : injuryPill(p));
       if (p.in_reserve) { addPill(nm, el("span", "pill ir", "IR slot")); }
       if (p.currently_starting) { addPill(nm, el("span", "pill sit", "in your lineup")); }
-      var why = p.on_bye && !p.injury_status
+      var why = p.locked
+        ? "game over · locked on your bench, " + num(p.actual_points, 1) + " not counted"
+        : p.on_bye && !p.injury_status
         ? "on bye in week " + lg.upcoming_week
         : "cannot be counted on this week";
       if (p.in_reserve) { why += " · holds no bench spot"; }
       nm.appendChild(el("span", "meta", why));
       row.appendChild(nm);
-      row.appendChild(el("span", "pp", num(p.projected_ppg, 1)));
+      row.appendChild(el("span", "pp", num(p.locked ? p.actual_points : p.projected_ppg, 1)));
       host.appendChild(row);
     });
   }
@@ -1216,6 +1227,11 @@
       tr.appendChild(el("td", "rk", r.board_rank));
       var nm = el("td", "l");
       nm.appendChild(document.createTextNode(playerName(r)));
+      if (r.week_locked) {
+        var lk = el("span", "pill lock", "played");
+        lk.title = "His week " + lg.upcoming_week + " game has kicked off: Sleeper locks him until waivers run.";
+        addPill(nm, lk);
+      }
       addPill(nm, injuryPill(r));
       addPill(nm, luckPill(r));
       tr.appendChild(nm);
@@ -1265,6 +1281,10 @@
     }
     if (excluded.length) {
       availability += " No projection exists yet for " + excluded.join(", ") + ", so those slots are left out of the lineup and the moves rather than scored at zero.";
+    }
+    var locks = ln.locked_teams || [];
+    if (locks.length) {
+      availability += " " + locks.join(", ") + " have already played in week " + lg.upcoming_week + ", and Sleeper locks their players. A locked starter keeps his slot and his actual points; a locked bench player cannot come in; and their free agents (marked played on the board) cannot be added until waivers run, so they are left out of the moves. A kicker or defense swap waits while yours is locked.";
     }
 
     var blended = (fa.rows || []).some(function (r) { return r.projection_model === "blend"; });

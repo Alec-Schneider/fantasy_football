@@ -194,6 +194,7 @@ from fantasy_analyzer.players.opponent_strength import (
     completed_nfl_weeks,
     normalize_schedule,
     normalize_team,
+    started_nfl_teams,
 )
 from fantasy_analyzer.players.player_value import build_player_value_metrics
 from fantasy_analyzer.players.ros_backtest import build_scored_player_weeks
@@ -401,25 +402,21 @@ def _add_injury_status(frame: pd.DataFrame, catalog: dict) -> pd.DataFrame:
 
 
 def _upcoming_matchup(
-    client: SleeperClient,
-    league_id: str,
+    raw: list[dict],
     week: int,
     my_roster_id: Optional[int],
     teams_df: pd.DataFrame,
 ) -> Optional[dict]:
     """Resolve who ``my_roster_id`` faces in ``week``, from Sleeper's raw pairing.
 
-    Uses the raw ``/matchups/<week>`` payload rather than the normalized
+    ``raw`` is the ``/matchups/<week>`` payload rather than the normalized
     season frame: that frame is built from completed weeks, and this is by
-    definition the week that has not been played, so every ``points`` here is
-    still ``0.0`` and only the ``matchup_id`` grouping carries information.
+    definition the week not yet final. Before any game, every ``points`` is
+    ``0.0`` and only the ``matchup_id`` grouping carries information; once
+    a game has kicked off (a Thursday night game, say), ``points`` and
+    ``opponent_points`` are Sleeper's live totals so far.
     """
     if my_roster_id is None:
-        return None
-
-    try:
-        raw = client.get_matchups(league_id, week)
-    except Exception:  # pragma: no cover -- the page degrades without it
         return None
 
     mine = next(
@@ -449,6 +446,58 @@ def _upcoming_matchup(
         "opponent_roster_id": opponent_id,
         "opponent": _clean(row["display_name"]) if row is not None else None,
         "opponent_team_name": _clean(row["team_name"]) if row is not None else None,
+        "points": _clean(mine.get("points")),
+        "opponent_points": _clean(opponent.get("points")),
+    }
+
+
+def _live_player_points(
+    raw: list[dict], my_roster_id: Optional[int]
+) -> dict[str, float]:
+    """``player_id -> points so far`` for ``my_roster_id`` in a raw week payload.
+
+    Sleeper's live ``players_points``: final for a player whose game is
+    over, partial for one in progress, ``0.0`` for one yet to play. Empty
+    when the roster has no row.
+    """
+    mine = next(
+        (row for row in raw if row.get("roster_id") == my_roster_id), None
+    )
+    if mine is None:
+        return {}
+    return {
+        str(player_id): float(points)
+        for player_id, points in (mine.get("players_points") or {}).items()
+        if points is not None
+    }
+
+
+def _locked_player_ids(
+    player_ids: Iterable[str],
+    roster_frame: pd.DataFrame,
+    catalog: dict,
+    locked_teams: frozenset[str],
+) -> set[str]:
+    """The players in ``player_ids`` whose NFL team's game has kicked off.
+
+    Team comes from the projection row when there is one, else the Sleeper
+    catalog, compared through ``normalize_team`` (``locked_teams`` is in
+    nflverse spelling, from ``started_nfl_teams``).
+    """
+    if not locked_teams:
+        return set()
+    teams = (
+        dict(zip(roster_frame["player_id"].astype(str), roster_frame["team"]))
+        if not roster_frame.empty
+        else {}
+    )
+    return {
+        player_id
+        for player_id in player_ids
+        if normalize_team(
+            teams.get(player_id, (catalog.get(player_id) or {}).get("team"))
+        )
+        in locked_teams
     }
 
 
@@ -1013,6 +1062,8 @@ def _build_lineup(
     byes: dict,
     upcoming_week: int,
     season_end_week: int,
+    locked_teams: frozenset[str] = frozenset(),
+    live_points: Optional[dict[str, float]] = None,
 ) -> dict:
     """Recommend a starting lineup and the best add/drop moves for one roster.
 
@@ -1041,11 +1092,26 @@ def _build_lineup(
       fill that week at the position's replacement level
       (:func:`_replacement_levels`, ``roster_fit``'s ``empty_slot_values``),
       so a backup is worth only his margin over a waiver streamer.
+    - **Game locks**: ``locked_teams`` (``started_nfl_teams``) are the NFL
+      teams whose game this week has kicked off, which Sleeper locks. A
+      locked player in the manager's current lineup keeps his slot and
+      scores his ``live_points`` (Sleeper's ``players_points``), added to
+      ``projected_points`` as ``locked_points``; the solve fills only the
+      other slots. A locked bench player is unavailable this week. In the
+      moves, a locked player is never the drop and a locked free agent is
+      never the add (Sleeper allows neither), and a K/DEF swap is not
+      offered while every rostered K (or DEF) is locked -- it would
+      otherwise fall back to a roster-wide drop and carry two kickers.
+      Known approximation: the moves' horizon evaluator has one slot list
+      for every week, so in the coming week alone it may bench a locked
+      starter for an add. That error is bounded by one week of the horizon
+      and needs an add projected above a locked starter he could replace.
     """
     player_ids = [str(pid) for pid in (my_roster.get("players") or [])]
     starters_now = {str(pid) for pid in (my_roster.get("starters") or [])}
     reserve = {str(pid) for pid in (my_roster.get("reserve") or [])}
     spots = open_roster_spots(my_roster, roster_positions)
+    live_points = live_points or {}
 
     excluded = unprojectable_positions(population_projections)
     lineup_slots = [slot for slot in roster_positions if slot not in excluded]
@@ -1076,6 +1142,8 @@ def _build_lineup(
             "open_roster_spots": spots,
             "horizon": horizon,
             "streaming_values": _replacement_levels(population_projections),
+            "locked_teams": sorted(locked_teams),
+            "locked_points": None,
         }
 
     roster_frame["player_id"] = roster_frame["player_id"].astype(str)
@@ -1086,20 +1154,60 @@ def _build_lineup(
         byes.get(normalize_team(team)) for team in roster_frame["team"]
     ]
     roster_frame = add_availability(roster_frame, upcoming_week)
+
+    # Game locks. Sleeper's ``starters`` list is aligned with the league's
+    # startable slots, so a locked starter's index *is* his slot.
+    locked = _locked_player_ids(player_ids, roster_frame, catalog, locked_teams)
+    all_slots = starting_slots(roster_positions)
+    sleeper_starters = [str(pid) for pid in (my_roster.get("starters") or [])]
+    fixed = {
+        index: pid
+        for index, pid in enumerate(sleeper_starters[: len(all_slots)])
+        if pid in locked and all_slots[index] not in excluded
+    }
+    roster_frame["locked"] = roster_frame["player_id"].isin(locked)
+    roster_frame["actual_points"] = [
+        live_points.get(pid, float("nan")) if pid in locked else float("nan")
+        for pid in roster_frame["player_id"]
+    ]
+    locked_bench = roster_frame["locked"] & ~roster_frame["player_id"].isin(
+        set(fixed.values())
+    )
+    roster_frame.loc[locked_bench, "available"] = False
+    roster_frame.loc[locked_bench, "unavailable_reason"] = "Locked"
     roster_frame["unavailable"] = ~roster_frame["available"]
     roster_frame["in_reserve"] = roster_frame["player_id"].isin(reserve)
 
-    # ``optimal_lineup`` honors the ``available`` column written above.
-    solution = optimal_lineup(roster_frame, lineup_slots, ppg_column=LINEUP_PPG_COLUMN)
-    placed = _fill_unprojected_slots(
-        assign_lineup_slots(
-            roster_frame,
-            solution.starters,
-            lineup_slots,
-            ppg_column=LINEUP_PPG_COLUMN,
-        ),
-        roster_frame,
-        starters_now,
+    # ``optimal_lineup`` honors the ``available`` column written above; the
+    # solve fills only the slots no locked starter holds.
+    free_slots = [
+        slot
+        for index, slot in enumerate(all_slots)
+        if index not in fixed and slot not in excluded
+    ]
+    solve_frame = roster_frame[~roster_frame["locked"]]
+    solution = optimal_lineup(solve_frame, free_slots, ppg_column=LINEUP_PPG_COLUMN)
+    free_placed = iter(
+        _fill_unprojected_slots(
+            assign_lineup_slots(
+                solve_frame,
+                solution.starters,
+                free_slots,
+                ppg_column=LINEUP_PPG_COLUMN,
+            ),
+            solve_frame,
+            starters_now,
+        )
+    )
+    placed = [
+        (slot, fixed[index]) if index in fixed else next(free_placed)
+        for index, slot in enumerate(all_slots)
+        if slot not in excluded
+    ]
+    locked_points = (
+        math.fsum(live_points.get(pid, 0.0) for pid in fixed.values())
+        if fixed
+        else None
     )
     slot_of = {pid: slot for slot, pid in placed if pid is not None}
     slot_rank = {pid: index for index, (_, pid) in enumerate(placed) if pid}
@@ -1143,6 +1251,8 @@ def _build_lineup(
         *USAGE_EXPLANATION_COLUMNS,
         "recommended_start",
         "currently_starting",
+        "locked",
+        "actual_points",
     ]
 
     candidates = board
@@ -1150,6 +1260,19 @@ def _build_lineup(
         candidates = candidates[
             ~candidates["injury_status"].isin(LONG_TERM_INJURY_STATUSES)
         ]
+    if not candidates.empty and locked_teams:
+        candidates = candidates[
+            [normalize_team(team) not in locked_teams for team in candidates["team"]]
+        ]
+        # A K/DEF move is a like-for-like swap; with every rostered one
+        # locked there is nothing to swap out until the lock clears.
+        held_kdef = roster_frame[roster_frame["position"].isin(KDEF_POSITIONS)]
+        blocked = {
+            position
+            for position, group in held_kdef.groupby("position")
+            if group["locked"].all()
+        }
+        candidates = candidates[~candidates["position"].isin(blocked)]
     if not candidates.empty:
         candidates = candidates[~candidates["position"].isin(excluded)].sort_values(
             by="projected_ppg", ascending=False, kind="stable"
@@ -1179,7 +1302,7 @@ def _build_lineup(
                 max_candidates=len(group),
                 week=upcoming_week,
                 season_end_week=season_end_week,
-                reserve_player_ids=reserve,
+                reserve_player_ids=reserve | locked,
                 open_roster_spots=spots,
                 same_position_drop=like_for_like,
                 empty_slot_values=streaming or None,
@@ -1198,26 +1321,30 @@ def _build_lineup(
             )
             add_drop = add_drop.merge(extra, on="player_id", how="left")
 
-    available = roster_frame[roster_frame["available"]]
-    starters = available[available["recommended_start"]]
+    # A locked starter holds his slot whatever his (possibly stale) injury
+    # status says, so starters are read off the placement, not ``available``.
+    starters = roster_frame[roster_frame["recommended_start"]]
     starters = starters.assign(
         _slot_rank=starters["player_id"].map(slot_rank)
     ).sort_values("_slot_rank", kind="stable")
+    sitting = roster_frame[~roster_frame["recommended_start"]]
 
     return {
         "projected_slots": slot_labels,
         "slot_order": [{"slot": slot, "player_id": pid} for slot, pid in placed],
         "recommended_starters": _records(starters, roster_columns),
-        "bench": _records(available[~available["recommended_start"]], roster_columns),
-        "unavailable": _records(
-            roster_frame[~roster_frame["available"]], roster_columns
+        "bench": _records(sitting[sitting["available"]], roster_columns),
+        "unavailable": _records(sitting[~sitting["available"]], roster_columns),
+        "projected_points": _clean(
+            solution.points_per_game + (locked_points or 0.0)
         ),
-        "projected_points": _clean(solution.points_per_game),
         "add_drop": _records(add_drop),
         "excluded_positions": sorted(excluded),
         "open_roster_spots": spots,
         "horizon": horizon,
         "streaming_values": streaming,
+        "locked_teams": sorted(locked_teams),
+        "locked_points": _clean(locked_points),
     }
 
 
@@ -1319,6 +1446,7 @@ def build_bundle(
     # publishing partial scores -- refresh it (docs/dashboard.md, step 1).
     nfl_completed = completed_nfl_weeks(games, season) if games is not None else []
     print(f"NFL weeks final in the schedule cache: {nfl_completed}", flush=True)
+    now = datetime.now(timezone.utc)
 
     commentary_dir = out_dir / "commentary"
     commentary_dir.mkdir(parents=True, exist_ok=True)
@@ -1364,12 +1492,26 @@ def build_bundle(
         # publishes the pairing well before the week is played (with every
         # ``points`` at 0.0), so this is available even though ``upcoming`` is
         # by definition not in ``completed_weeks``.
+        my_roster_id = my_roster.get("roster_id") if my_roster else None
+        try:
+            upcoming_raw = client.get_matchups(league_id, upcoming)
+        except Exception:  # pragma: no cover -- the page degrades without it
+            upcoming_raw = []
         upcoming_matchup = _upcoming_matchup(
-            client,
-            league_id,
-            upcoming,
-            my_roster.get("roster_id") if my_roster else None,
-            snapshot.teams_df,
+            upcoming_raw, upcoming, my_roster_id, snapshot.teams_df
+        )
+
+        # Teams whose game this week has already kicked off (a Thursday
+        # night game, say): Sleeper has locked their players.
+        locked_teams = (
+            started_nfl_teams(games, season, upcoming, now)
+            if games is not None
+            else frozenset()
+        )
+        print(
+            f"[{slug}]   week {upcoming} games kicked off: "
+            f"{sorted(locked_teams) or 'none'}",
+            flush=True,
         )
 
         scored_weeks = build_scored_player_weeks(
@@ -1434,10 +1576,18 @@ def build_bundle(
                 byes,
                 upcoming,
                 season_end_week,
+                locked_teams=locked_teams,
+                live_points=_live_player_points(upcoming_raw, my_roster_id),
             )
             if my_roster
             else None
         )
+        if not board.empty:
+            board = board.assign(
+                week_locked=[
+                    normalize_team(team) in locked_teams for team in board["team"]
+                ]
+            )
 
         board_columns = [
             "board_rank",
@@ -1471,6 +1621,7 @@ def build_bundle(
             "remaining_schedule_multiplier",
             "remaining_games_scheduled",
             "schedule_adjusted_ros_points",
+            "week_locked",
             *USAGE_EXPLANATION_COLUMNS,
         ]
 
