@@ -213,6 +213,33 @@ A kicker or defense move is also scored as a **swap for the one you
 roster**, not against your cheapest bench player — a kicker is only ever
 added to replace a kicker.
 
+## Refreshing mid-week: game locks
+
+Rebuilding between Thursday night and Monday night is supported, and is
+the way to pick up Friday's final injury designations. Once an NFL game
+kicks off Sleeper locks its players, and the build honours that
+(`started_nfl_teams` in `players/opponent_strength.py`, which reads the
+schedule cache's scores and kickoff times):
+
+- A locked player **in your current lineup** keeps his slot and scores his
+  actual points (Sleeper's live `players_points`). The headline projection
+  is those points plus the projection for the remaining slots.
+- A locked player **on your bench** cannot come in. He is listed with the
+  unavailable players, showing what he scored.
+- A locked **free agent** cannot be added until waivers run. He stays on the
+  waiver board marked "played" and is left out of the moves. A locked
+  rostered player is never the drop. While every kicker (or defense) you
+  roster is locked, no kicker (or defense) swap is offered.
+- The "Week N vs" stat shows the live score so far.
+
+Projections are unaffected: they read weeks up to the last *completed*
+week, so a partial week's stats never leak in. One known approximation
+remains. The moves' rest-of-season scorer uses one slot list for every
+week, so in the coming week alone it may bench a locked starter for an
+add. The error is at most one week of the horizon, and it needs a free
+agent projected above a locked starter he could replace. The build
+records the locked teams (`lineup.locked_teams`) so this can be checked.
+
 ## Known limitations
 
 - **Kickers are close to a coin flip.** The K model only ties the
