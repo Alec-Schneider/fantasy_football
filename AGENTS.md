@@ -415,7 +415,37 @@ Known follow-ups, none blocking:
 
 ---
 
+# Epic 11 — Matchup Tab
+
+A second dashboard tab for the week being played: my Sleeper-set lineup
+against my opponent's, slot by slot, with live points, projected finals, a
+calibrated win probability and a season-to-date comparison. The design, the
+methodology and the **bundle contract** every ticket builds against are in
+`docs/matchup_tab.md`. Read it before starting any of these tickets.
+
+- **FFA-113** — Matchup lineup projection — IN PROGRESS — `nfl_game_states`
+  in `players/opponent_strength.py`, plus `players/matchup_projection.py`
+  (per-slot expected points, pending flags, alerts, positional edges).
+- **FFA-114** — Win probability model — IN PROGRESS —
+  `players/win_probability.py`, fitted by `scripts/fit_win_probability.py`
+  and calibrated on the three leagues' 2025 seasons.
+  `docs/win-probability.md` records the measured results.
+- **FFA-115** — Matchup team comparison — IN PROGRESS —
+  `analytics/matchup_preview.py` (team stats, season head-to-head) and a
+  Sleeper-scored started-player frame for `build_position_strength_metrics`.
+- **FFA-117** — Matchup tab page — IN PROGRESS — Matchup/Season tabs in
+  `scripts/templates/dashboard.html.tpl`.
+- **FFA-116** — Bundle wiring — BACKLOG (needs 113, 114, 115) — the
+  `matchup` key in `scripts/build_dashboard.py`.
+- **FFA-118** — Docs and board — BACKLOG (needs 116, 117).
+
+---
+
 # Current Kanban Board
+
+## IN PROGRESS
+
+- **FFA-113**, **FFA-114**, **FFA-115**, **FFA-117** — Epic 11 above.
 
 ## READY
 
@@ -430,15 +460,9 @@ All three are measured and described under Epic 10 above.
 
 ## BACKLOG
 
-None.
+- **FFA-116**, **FFA-118** — Epic 11 above.
 
 Tickets become READY when their dependencies are complete and reviewed.
-
----
-
-## IN PROGRESS
-
-None.
 
 ---
 
