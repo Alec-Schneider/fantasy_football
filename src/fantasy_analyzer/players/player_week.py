@@ -183,7 +183,7 @@ other without touching FFA-065 through FFA-073.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 
 import pandas as pd
 
@@ -556,3 +556,124 @@ def _finalize_fact_table(
         player_week_df=player_week_df,
         unsupported_scoring_keys=scoring_result.unsupported_scoring_keys,
     )
+
+
+#: Sleeper's placeholder for an empty starting slot in ``starters``.
+_EMPTY_SLOT_ID = "0"
+
+
+def _catalog_identity(player_id: str, catalog: Mapping[str, Mapping[str, Any]]) -> dict:
+    """``player_name``/``position``/``nfl_team`` for one Sleeper player id.
+
+    A team defense is keyed by its team abbreviation (``"PIT"``) with catalog
+    position ``DEF``; when the catalog lacks the entry (or its ``team``), an
+    all-letters upper-case id is treated as a defense and its own abbreviation
+    is the ``nfl_team``. Anything else unresolvable stays ``None``.
+    """
+    entry = catalog.get(player_id) or {}
+    name = entry.get("full_name")
+    if not name:
+        name = " ".join(
+            part for part in (entry.get("first_name"), entry.get("last_name")) if part
+        )
+    position = entry.get("position")
+    team = entry.get("team")
+    looks_like_defense = player_id.isalpha() and player_id.isupper()
+    if position == "DEF" or (not entry and looks_like_defense):
+        position = "DEF"
+        team = team or player_id
+        name = name or player_id
+    return {
+        "player_name": name or None,
+        "position": position,
+        "nfl_team": team,
+    }
+
+
+def build_sleeper_scored_player_weeks(
+    raw_weeks: Mapping[int, Sequence[Mapping[str, Any]]],
+    catalog: Mapping[str, Mapping[str, Any]],
+    teams_df: pd.DataFrame,
+    season: int | str,
+    *,
+    through_week: Optional[int] = None,
+) -> pd.DataFrame:
+    """Build a player-week frame scored by Sleeper itself, with no provider.
+
+    Why this exists: :func:`build_player_week_fact_table` needs an nflverse
+    provider, an ID crosswalk and the scoring engine, which is the right
+    path for value-over-replacement work but heavy for "how much did each
+    team's started QB/RB/WR/TE/K/DEF produce". Every Sleeper matchup entry
+    already carries ``players_points``, the per-player scores that actually
+    decided the matchups, so this is a cheap alternative for started-
+    production questions. Its ``fantasy_points`` are **Sleeper's**, not this
+    package's scoring engine, and it carries no raw stat columns.
+
+    One row per ``(week, roster_id, player_id)`` in each roster-week's
+    ``players`` (``starters`` if ``players`` is absent). ``started`` is
+    membership in ``starters`` and ``bench`` its inverse. Sleeper's empty-slot
+    placeholder id ``"0"`` is skipped. ``fantasy_team`` is the roster's
+    ``display_name`` in ``teams_df`` (``None`` if unmapped), as
+    :func:`build_player_week_fact_table` labels it. ``position``,
+    ``player_name`` and ``nfl_team`` come from ``catalog`` (see
+    :func:`_catalog_identity` for team defenses).
+
+    A player absent from ``players_points`` gets ``fantasy_points = 0.0``:
+    Sleeper recorded no score for them that week (bye, inactive, game not yet
+    played). Pass ``through_week`` so unplayed future weeks are not emitted
+    as zeros.
+
+    The frame is shaped for
+    :func:`~fantasy_analyzer.players.position_strength.build_position_strength_metrics`:
+    :data:`PLAYER_WEEK_COLUMNS` followed by ``fantasy_points``. ``gsis_id`` is
+    ``None`` (Sleeper cannot supply it). With no raw stat columns,
+    ``positional_depth`` from that function is ``0`` for every group; the
+    started-production columns are unaffected.
+
+    Args:
+        raw_weeks: ``week -> Sleeper /matchups/<week>`` payload.
+        catalog: Sleeper player catalog keyed by player id.
+        teams_df: ``LeagueSnapshot.teams_df``-shaped frame.
+        season: Season label, normalized to ``int`` as elsewhere in this module.
+        through_week: If given, only weeks ``<= through_week`` are emitted.
+
+    Returns:
+        A DataFrame with columns ``PLAYER_WEEK_COLUMNS + ["fantasy_points"]``,
+        ordered by week, then payload order. Empty (correct columns) if there
+        is nothing to emit.
+    """
+    season_int = int(season)
+    owner_by_roster = _owner_by_roster(teams_df)
+    rows: list[dict] = []
+    for week in sorted(raw_weeks):
+        if through_week is not None and week > through_week:
+            continue
+        for entry in raw_weeks[week] or []:
+            roster_id = entry.get("roster_id")
+            starters = list(entry.get("starters") or [])
+            players = list(entry.get("players") or starters)
+            points = entry.get("players_points") or {}
+            fantasy_team = owner_by_roster.get(roster_id)
+            for player_id in players:
+                if player_id == _EMPTY_SLOT_ID:
+                    continue
+                score = points.get(player_id)
+                rows.append(
+                    {
+                        "season": season_int,
+                        "week": week,
+                        "roster_id": roster_id,
+                        "fantasy_team": fantasy_team,
+                        "sleeper_player_id": player_id,
+                        "gsis_id": None,
+                        **_catalog_identity(player_id, catalog),
+                        "started": player_id in starters,
+                        "bench": player_id not in starters,
+                        "fantasy_points": 0.0 if score is None else float(score),
+                    }
+                )
+
+    columns = PLAYER_WEEK_COLUMNS + ["fantasy_points"]
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows, columns=columns)

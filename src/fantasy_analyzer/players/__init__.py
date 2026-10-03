@@ -183,10 +183,12 @@ from fantasy_analyzer.players.opponent_strength import (
     DEFENSE_VS_POSITION_COLUMNS,
     MATCHUP_CONTEXT_COLUMNS,
     TEAM_WEEK_SCHEDULE_COLUMNS,
+    NflGameState,
     add_matchup_context,
     build_defense_vs_position,
     bye_weeks,
     completed_nfl_weeks,
+    nfl_game_states,
     normalize_schedule,
     normalize_team,
 )
@@ -221,6 +223,7 @@ from fantasy_analyzer.players.player_week import (
     PlayerWeekFactTable,
     build_league_wide_player_week_fact_table,
     build_player_week_fact_table,
+    build_sleeper_scored_player_weeks,
 )
 from fantasy_analyzer.players.points_allowed import (
     POINTS_ALLOWED_COLUMNS,
@@ -430,7 +433,9 @@ __all__ = [
     "PlayerWeekFactTable",
     "build_player_week_fact_table",
     "build_league_wide_player_week_fact_table",
+    "build_sleeper_scored_player_weeks",
     "NflverseScheduleClient",
+    "NflGameState",
     "NFLVERSE_SCHEDULE_DEFAULT_CACHE_DIR",
     "load_games_cache",
     "refresh_games_cache",
@@ -507,6 +512,7 @@ __all__ = [
     "roster_id_by_player",
     "build_team_defense_weeks",
     "completed_nfl_weeks",
+    "nfl_game_states",
     "POSITION_ALIASES",
     "assign_lineup_slots",
     "open_roster_spots",

@@ -653,3 +653,102 @@ def test_league_wide_unsupported_scoring_key_is_still_surfaced(
     )
 
     assert result.unsupported_scoring_keys == ["bonus_rec_te"]
+
+
+# --- build_sleeper_scored_player_weeks (FFA-115) -------------------------
+
+from fantasy_analyzer.players import (  # noqa: E402
+    build_position_strength_metrics,
+    build_sleeper_scored_player_weeks,
+)
+
+_SLEEPER_CATALOG = {
+    "100": {"full_name": "Quinn QB", "position": "QB", "team": "PIT"},
+    "200": {"first_name": "Rex", "last_name": "RB", "position": "RB", "team": "CLE"},
+    "300": {"full_name": "Kyle Kicker", "position": "K", "team": "BAL"},
+    "PIT": {"first_name": "Pittsburgh", "last_name": "Steelers", "position": "DEF",
+            "team": None},
+}
+
+
+def _raw_sleeper_weeks() -> dict:
+    return {
+        1: [
+            {"roster_id": 1, "matchup_id": 1, "points": 40.0,
+             "starters": ["100", "PIT", "0"],
+             "players": ["100", "200", "PIT"],
+             "players_points": {"100": 20.0, "200": 7.5, "PIT": 6.0}},
+        ],
+        2: [
+            {"roster_id": 1, "matchup_id": 1, "points": 25.0,
+             "starters": ["100", "PIT", "200"],
+             "players": ["100", "200", "PIT", "300"],
+             "players_points": {"100": 25.0, "PIT": 10.0}},
+        ],
+    }
+
+
+def test_sleeper_scored_started_vs_bench_def_and_points() -> None:
+    df = build_sleeper_scored_player_weeks(
+        _raw_sleeper_weeks(), _SLEEPER_CATALOG,
+        _teams_df([{"roster_id": 1, "owner_id": "u1", "display_name": "alice",
+                    "team_name": "A"}]),
+        "2026", through_week=1,
+    )
+    assert list(df.columns) == PLAYER_WEEK_COLUMNS + ["fantasy_points"]
+    # Empty-slot id "0" is not in players; 3 players in week 1.
+    assert len(df) == 3
+    by_id = df.set_index("sleeper_player_id")
+    assert by_id.loc["100", "started"] and not by_id.loc["100", "bench"]
+    assert by_id.loc["200", "bench"] and not by_id.loc["200", "started"]
+    assert by_id.loc["200", "player_name"] == "Rex RB"
+    assert by_id.loc["PIT", "position"] == "DEF"
+    assert by_id.loc["PIT", "nfl_team"] == "PIT"
+    assert by_id.loc["100", "fantasy_points"] == 20.0
+    assert (df["fantasy_team"] == "alice").all()
+    assert (df["season"] == 2026).all()
+    assert df["gsis_id"].isna().all()
+
+
+def test_sleeper_scored_through_week_and_missing_points_rule() -> None:
+    teams = _teams_df([{"roster_id": 1, "owner_id": "u1", "display_name": "alice",
+                        "team_name": "A"}])
+    full = build_sleeper_scored_player_weeks(
+        _raw_sleeper_weeks(), _SLEEPER_CATALOG, teams, 2026
+    )
+    assert sorted(full["week"].unique()) == [1, 2]
+    wk2 = full[full["week"] == 2].set_index("sleeper_player_id")
+    # Absent from players_points -> 0.0, not NaN or dropped.
+    assert wk2.loc["200", "fantasy_points"] == 0.0
+    assert wk2.loc["300", "fantasy_points"] == 0.0
+    assert wk2.loc["200", "started"]
+    only1 = build_sleeper_scored_player_weeks(
+        _raw_sleeper_weeks(), _SLEEPER_CATALOG, teams, 2026, through_week=1
+    )
+    assert set(only1["week"]) == {1}
+
+
+def test_sleeper_scored_unmapped_roster_and_empty() -> None:
+    df = build_sleeper_scored_player_weeks(
+        _raw_sleeper_weeks(), _SLEEPER_CATALOG, _teams_df([]), 2026
+    )
+    assert df["fantasy_team"].isna().all()
+    empty = build_sleeper_scored_player_weeks({}, {}, _teams_df([]), 2026)
+    assert empty.empty
+    assert list(empty.columns) == PLAYER_WEEK_COLUMNS + ["fantasy_points"]
+
+
+def test_sleeper_scored_round_trips_through_position_strength() -> None:
+    teams = _teams_df([{"roster_id": 1, "owner_id": "u1", "display_name": "alice",
+                        "team_name": "A"}])
+    df = build_sleeper_scored_player_weeks(
+        _raw_sleeper_weeks(), _SLEEPER_CATALOG, teams, 2026
+    )
+    out = build_position_strength_metrics(df).set_index("position")
+    # QB started both weeks: 20 + 25 over 2 weeks.
+    assert out.loc["QB", "points_per_game"] == pytest.approx(22.5)
+    assert out.loc["DEF", "total_points"] == pytest.approx(16.0)
+    # RB 200 benched in week 1 (7.5 ignored), started week 2 for 0.0.
+    assert out.loc["RB", "total_points"] == 0.0
+    assert "K" not in out.index  # only ever benched
+    assert out.loc["QB", "positional_rank"] == 1

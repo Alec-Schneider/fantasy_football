@@ -20,6 +20,7 @@ from fantasy_analyzer.players.opponent_strength import (
     build_defense_vs_position,
     bye_weeks,
     completed_nfl_weeks,
+    nfl_game_states,
     normalize_schedule,
     normalize_team,
     started_nfl_teams,
@@ -515,3 +516,51 @@ def test_started_nfl_teams_edge_inputs() -> None:
     assert started_nfl_teams(scores_only, 2026, 4, now) == {"CLE", "PIT"}
     with pytest.raises(ValueError):
         started_nfl_teams(LOCK_WEEK, 2026, 4, datetime(2026, 10, 3))
+
+
+# --------------------------------------------------------------------------
+# nfl_game_states -- per-team game state (FFA-113)
+# --------------------------------------------------------------------------
+
+
+def test_nfl_game_states_scheduled_in_progress_final_and_bye() -> None:
+    """Saturday 12:00 UTC: TNF final; at 13:30 UTC the London game is live."""
+    saturday = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
+    states = nfl_game_states(LOCK_WEEK, 2026, 4, saturday)
+    assert set(states) == {"CLE", "PIT", "WAS", "IND", "BAL", "TEN", "NO", "ATL"}
+    assert states["CLE"].state == "final"
+    assert states["CLE"].opponent == "PIT" and states["CLE"].is_home is True
+    assert states["PIT"].opponent == "CLE" and states["PIT"].is_home is False
+    assert states["WAS"].state == "scheduled"
+
+    london = datetime(2026, 10, 4, 13, 30, tzinfo=timezone.utc)
+    live = nfl_game_states(LOCK_WEEK, 2026, 4, london)
+    assert live["WAS"].state == "in_progress" and live["IND"].state == "in_progress"
+    assert live["BAL"].state == "scheduled"
+    # A team with no game this week (a bye) is simply absent.
+    assert "KC" not in live
+
+
+def test_nfl_game_states_kickoff_is_eastern_aware() -> None:
+    saturday = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
+    kickoff = nfl_game_states(LOCK_WEEK, 2026, 4, saturday)["BAL"].kickoff
+    assert kickoff is not None
+    assert kickoff.isoformat() == "2026-10-04T13:00:00-04:00"
+
+
+def test_nfl_game_states_edge_inputs() -> None:
+    now = datetime(2026, 10, 3, tzinfo=timezone.utc)
+    assert nfl_game_states(pd.DataFrame(), 2026, 4, now) == {}
+    assert nfl_game_states(LOCK_WEEK, 2026, 9, now) == {}
+    assert nfl_game_states(LOCK_WEEK[["season", "week"]], 2026, 4, now) == {}
+    playoff = pd.DataFrame(
+        [_game(19, "KC", "BUF", "2027-01-10", "16:30", True, game_type="WC")]
+    )
+    assert nfl_game_states(playoff, 2026, 19, now) == {}
+    # No kickoff columns: scores alone decide, kickoff is None.
+    scores_only = LOCK_WEEK.drop(columns=["gameday", "gametime"])
+    states = nfl_game_states(scores_only, 2026, 4, now)
+    assert states["CLE"].state == "final" and states["CLE"].kickoff is None
+    assert states["BAL"].state == "scheduled"
+    with pytest.raises(ValueError):
+        nfl_game_states(LOCK_WEEK, 2026, 4, datetime(2026, 10, 3))

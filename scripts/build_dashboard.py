@@ -139,6 +139,25 @@ the add/drop search is scored over the rest of the fantasy regular season
 with each player's per-week availability, so a player who is merely Out or
 on bye *this* week is never offered as a free drop. IR-slot (``reserve``)
 players are never proposed as drops -- they hold no bench spot.
+
+Matchup tab (FFA-116)
+----------------------
+
+Each league also carries a ``matchup`` object for the week about to be
+played (contract: ``docs/matchup_tab.md``): the lineup *actually set in
+Sleeper* for both managers, slot by slot, with expected points
+(``players.matchup_projection``), per-slot-group edges, the opponent's
+optimal total, and a season-to-date comparison through the last completed
+week (``analytics.matchup_preview``). It is ``None`` with no roster, no
+matchup payload or an opponent-less bye.
+
+``win_probability`` comes from the FFA-114 model
+(``players.win_probability``, ``docs/win-probability.md``), fitted by
+``scripts/fit_win_probability.py``. It is ``None`` -- the page then shows
+only the projected margin -- when the parameter file is missing *or* was
+written without the team-level calibration: an uncalibrated probability is
+never published. The build prints which case applies. It is also ``None``
+in week 1: the calibration starts at week 2 (cutoff >= 1).
 """
 
 from __future__ import annotations
@@ -154,6 +173,11 @@ import pandas as pd
 from draft_league_presets import LEAGUES
 
 from fantasy_analyzer.analytics.league_analytics import build_league_analytics
+from fantasy_analyzer.analytics.matchup_preview import (
+    build_matchup_team_stats,
+    build_position_comparison,
+    build_season_head_to_head,
+)
 from fantasy_analyzer.analytics.power_rankings import build_power_rankings
 from fantasy_analyzer.analytics.standings import build_standings_through_week
 from fantasy_analyzer.commentary.context import build_league_week_context
@@ -182,6 +206,11 @@ from fantasy_analyzer.players.kicker_defense import (
     build_kicker_defense_projections,
 )
 from fantasy_analyzer.players.lineup_efficiency import START_SLOT_ELIGIBILITY
+from fantasy_analyzer.players.matchup_projection import (
+    MATCHUP_SLOT_COLUMNS,
+    build_matchup_side,
+    build_position_edges,
+)
 from fantasy_analyzer.players.nflverse_cache import get_player_stats_cached
 from fantasy_analyzer.players.nflverse_client import NflverseClient
 from fantasy_analyzer.players.nflverse_provider import NflverseWeeklyStatsProvider
@@ -192,11 +221,16 @@ from fantasy_analyzer.players.opponent_strength import (
     build_defense_vs_position,
     bye_weeks,
     completed_nfl_weeks,
+    nfl_game_states,
     normalize_schedule,
     normalize_team,
     started_nfl_teams,
 )
 from fantasy_analyzer.players.player_value import build_player_value_metrics
+from fantasy_analyzer.players.player_week import build_sleeper_scored_player_weeks
+from fantasy_analyzer.players.position_strength import (
+    build_position_strength_metrics,
+)
 from fantasy_analyzer.players.ros_backtest import build_scored_player_weeks
 from fantasy_analyzer.players.ros_projection import (
     DEFAULT_N0,
@@ -220,6 +254,12 @@ from fantasy_analyzer.players.usage_projection import (
 from fantasy_analyzer.players.waiver_rankings import (
     build_free_agent_ros_projections,
     build_waiver_wire_rankings,
+)
+from fantasy_analyzer.players.win_probability import (
+    WinProbabilityParameters,
+    load_win_probability_parameters,
+    team_score_sd,
+    win_probability,
 )
 from fantasy_analyzer.sleeper.cache import get_players_cached
 from fantasy_analyzer.sleeper.client import SleeperClient
@@ -561,10 +601,12 @@ def unprojectable_positions(projections: pd.DataFrame) -> frozenset[str]:
 
 
 def _league_frames(client: SleeperClient, league_id: str, total_weeks: int):
-    """Build a league's snapshot, season matchup frame, and analytics.
+    """Build a league's snapshot, season matchup frame, analytics and raw weeks.
 
     The same normalization chain ``cli.build_commentary_inputs`` uses, minus
-    the player-week fact table -- see the module docstring.
+    the player-week fact table -- see the module docstring. The fourth
+    element is ``week -> raw Sleeper matchup entries``, which the matchup
+    tab's per-position comparison needs.
     """
     snapshot = load_league_snapshot(client, league_id)
     boundaries = derive_season_boundaries(snapshot.league, total_weeks=total_weeks)
@@ -574,7 +616,8 @@ def _league_frames(client: SleeperClient, league_id: str, total_weeks: int):
     outcomes = derive_season_outcomes(pair_season_matchups(weeks))
     season_matchup_df = build_season_matchup_df(outcomes, snapshot.teams_df)
     analytics = build_league_analytics(season_matchup_df, snapshot.teams_df)
-    return snapshot, season_matchup_df, analytics
+    raw_weeks = {week.week: week.matchups for week in weeks}
+    return snapshot, season_matchup_df, analytics, raw_weeks
 
 
 def _week_payload(
@@ -1348,6 +1391,230 @@ def _build_lineup(
     }
 
 
+def _entry_for(raw: list[dict], roster_id: Any) -> Optional[dict]:
+    """The raw week-payload entry for ``roster_id``, or ``None``."""
+    return next((row for row in raw if row.get("roster_id") == roster_id), None)
+
+
+def _matchup_side(
+    roster_id: int,
+    entry: dict,
+    roster: Optional[dict],
+    roster_positions: list[str],
+    teams_df: pd.DataFrame,
+    valued: pd.DataFrame,
+    catalog: dict,
+    byes: dict,
+    game_states: dict,
+    week: int,
+    optimal_total: Optional[float],
+) -> tuple[dict, pd.DataFrame]:
+    """One contract ``Side`` dict plus its starters frame (for the edges).
+
+    The payload entry's ``starters``/``players`` win over the roster's own
+    lists: the payload is what Sleeper scores for ``week``.
+    """
+    roster = roster or {}
+    starters = entry.get("starters") or roster.get("starters") or []
+    players = entry.get("players") or roster.get("players") or []
+    side = build_matchup_side(
+        starters,
+        players,
+        roster_positions,
+        valued,
+        catalog,
+        _live_player_points([entry], roster_id),
+        game_states,
+        week,
+        byes=byes,
+        reserve=roster.get("reserve") or [],
+        ppg_column=LINEUP_PPG_COLUMN,
+    )
+    label = teams_df[teams_df["roster_id"] == roster_id]
+    return (
+        {
+            "roster_id": roster_id,
+            "owner": _clean(label["display_name"].iloc[0]) if len(label) else None,
+            "team_name": _clean(label["team_name"].iloc[0]) if len(label) else None,
+            "points": _clean(entry.get("points")),
+            "projected_total": _clean(side.projected_total),
+            "players_remaining": side.players_remaining,
+            "optimal_total": _clean(optimal_total),
+            "starters": _records(side.starters, MATCHUP_SLOT_COLUMNS),
+            "bench": _records(side.bench, MATCHUP_SLOT_COLUMNS),
+            "alerts": [{k: _clean(v) for k, v in a.items()} for a in side.alerts],
+        },
+        side.starters,
+    )
+
+
+def _win_probability_block(
+    me: dict,
+    my_starters: pd.DataFrame,
+    opponent: dict,
+    their_starters: pd.DataFrame,
+    parameters: Optional[WinProbabilityParameters],
+) -> Optional[dict]:
+    """The contract's ``win_probability`` object, or ``None``.
+
+    ``None`` without parameters, with *uncalibrated* parameters, or when a
+    side has no projected total. Each side's SD sums the per-player
+    variance over its pending starters (``team_score_sd``); ``margin_sd``
+    includes the fitted inflation factor.
+    """
+    if parameters is None or not parameters.calibrated:
+        return None
+    mean, opponent_mean = me["projected_total"], opponent["projected_total"]
+    if mean is None or opponent_mean is None:
+        return None
+    sd = team_score_sd(my_starters, parameters)
+    opponent_sd = team_score_sd(their_starters, parameters)
+    probability = win_probability(mean, sd, opponent_mean, opponent_sd, parameters)
+    return {
+        "me": probability,
+        "opponent": 1.0 - probability,
+        "projected_margin": mean - opponent_mean,
+        "margin_sd": parameters.margin_sd_multiplier
+        * math.sqrt(sd**2 + opponent_sd**2),
+        "me_sd": sd,
+        "opponent_sd": opponent_sd,
+    }
+
+
+def _build_matchup(
+    roster_positions: list[str],
+    my_roster_id: Optional[int],
+    week_raw: list[dict],
+    raw_rosters: list[dict],
+    teams_df: pd.DataFrame,
+    valued: pd.DataFrame,
+    catalog: dict,
+    byes: dict,
+    game_states: dict,
+    week: int,
+    lineup: Optional[dict],
+    opponent_optimal_total: Optional[float],
+    comparison: Optional[dict],
+    win_parameters: Optional[WinProbabilityParameters] = None,
+) -> Optional[dict]:
+    """The contract's ``matchup`` object, or ``None`` (FFA-116).
+
+    Pure given its inputs. ``None`` when there is no roster for the user, no
+    ``matchup_id`` in ``week_raw``, or no opponent (a bye). ``phase`` is
+    ``"live"`` once any NFL game this week has kicked off; ``nfl_games``
+    counts games (a game appears once per team in ``game_states``).
+    ``win_probability`` is :func:`_win_probability_block` over
+    ``win_parameters``.
+    """
+    if my_roster_id is None:
+        return None
+    mine = _entry_for(week_raw, my_roster_id)
+    if mine is None or mine.get("matchup_id") is None:
+        return None
+    theirs = next(
+        (
+            row
+            for row in week_raw
+            if row.get("matchup_id") == mine.get("matchup_id")
+            and row.get("roster_id") != my_roster_id
+        ),
+        None,
+    )
+    if theirs is None:
+        return None
+
+    rosters = {r.get("roster_id"): r for r in raw_rosters}
+    opponent_id = theirs.get("roster_id")
+    my_optimal = lineup.get("projected_points") if lineup else None
+
+    me, my_starters = _matchup_side(
+        my_roster_id, mine, rosters.get(my_roster_id), roster_positions,
+        teams_df, valued, catalog, byes, game_states, week, my_optimal,
+    )
+    opponent, their_starters = _matchup_side(
+        opponent_id, theirs, rosters.get(opponent_id), roster_positions,
+        teams_df, valued, catalog, byes, game_states, week,
+        opponent_optimal_total,
+    )
+
+    states = [game.state for game in game_states.values()]
+    kicked_off = sum(state in ("in_progress", "final") for state in states)
+    my_recommended_total = _clean(my_optimal)
+    gain = (
+        None
+        if my_recommended_total is None or me["projected_total"] is None
+        else my_recommended_total - me["projected_total"]
+    )
+    return {
+        "week": week,
+        "phase": "live" if kicked_off else "pre",
+        "nfl_games": {
+            "total": len(states) // 2,
+            "kicked_off": kicked_off // 2,
+            "final": sum(state == "final" for state in states) // 2,
+        },
+        "me": me,
+        "opponent": opponent,
+        "win_probability": _win_probability_block(
+            me, my_starters, opponent, their_starters, win_parameters
+        ),
+        "position_edges": _records(
+            build_position_edges(my_starters, their_starters)
+        ),
+        "my_recommended_total": my_recommended_total,
+        "my_recommended_gain": gain,
+        "comparison": comparison,
+    }
+
+
+def _build_comparison(
+    season_matchup_df: pd.DataFrame,
+    teams_df: pd.DataFrame,
+    raw_weeks: dict[int, list[dict]],
+    catalog: dict,
+    season: int,
+    cutoff: int,
+    my_roster_id: int,
+    opponent_roster_id: int,
+) -> Optional[dict]:
+    """The contract's ``Comparison`` object, or ``None`` before any completed week.
+
+    ``raw_weeks`` should hold only completed regular-season weeks; the
+    per-position comparison is further cut at ``cutoff``. Positions match
+    teams on the roster's ``display_name`` (``fantasy_team``).
+    """
+    if cutoff < 1:
+        return None
+    stats = build_matchup_team_stats(season_matchup_df, teams_df, cutoff)
+
+    def team_row(roster_id: int) -> Optional[dict]:
+        rows = _records(stats[stats["roster_id"] == roster_id])
+        return rows[0] if rows else None
+
+    names = teams_df.set_index("roster_id")["display_name"]
+    scored = build_sleeper_scored_player_weeks(
+        raw_weeks, catalog, teams_df, season, through_week=cutoff
+    )
+    positions = (
+        build_position_comparison(
+            build_position_strength_metrics(scored),
+            names.get(my_roster_id),
+            names.get(opponent_roster_id),
+        )
+        if not scored.empty
+        else []
+    )
+    return {
+        "through_week": cutoff,
+        "me": team_row(my_roster_id),
+        "opponent": team_row(opponent_roster_id),
+        "positions": json.loads(json.dumps(positions)),
+        "head_to_head": build_season_head_to_head(
+            season_matchup_df, my_roster_id, opponent_roster_id, cutoff
+        ),
+    }
+
+
 def _load_usage_inputs(
     season: int,
 ) -> tuple[Optional[UsageModelParameters], Optional[pd.DataFrame]]:
@@ -1388,6 +1655,35 @@ def _load_usage_inputs(
     return usage_parameters, usage
 
 
+def _load_win_parameters() -> Optional[WinProbabilityParameters]:
+    """The fitted win-probability parameters, or ``None`` if unusable.
+
+    Prints which case applies, like :func:`_load_usage_inputs`: a missing
+    file and an uncalibrated one both leave the page showing only the
+    projected margin.
+    """
+    parameters = load_win_probability_parameters()
+    if parameters is None:
+        print(
+            "win probability: no fitted parameters (run "
+            "scripts/fit_win_probability.py) -- page shows the margin only",
+            flush=True,
+        )
+        return None
+    if not parameters.calibrated:
+        print(
+            "win probability: parameters are uncalibrated -- not published",
+            flush=True,
+        )
+        return None
+    print(
+        f"win probability: calibrated, {parameters.form} SD, "
+        f"lambda {parameters.margin_sd_multiplier:.3f}",
+        flush=True,
+    )
+    return parameters
+
+
 def build_bundle(
     season: int,
     total_weeks: int,
@@ -1405,6 +1701,7 @@ def build_bundle(
         n0_by_position={}, default_n0=DEFAULT_N0
     )
     usage_parameters, usage = _load_usage_inputs(season)
+    win_parameters = _load_win_parameters()
 
     user = client.get_user(username)
     nfl_state = _nfl_state(client)
@@ -1459,7 +1756,7 @@ def build_bundle(
         league_id = preset["league_id"]
         print(f"[{slug}] league {league_id}", flush=True)
 
-        snapshot, season_matchup_df, analytics = _league_frames(
+        snapshot, season_matchup_df, analytics, raw_weeks = _league_frames(
             client, league_id, total_weeks
         )
         completed = _completed_weeks(season_matchup_df, nfl_completed)
@@ -1507,6 +1804,11 @@ def build_bundle(
             started_nfl_teams(games, season, upcoming, now)
             if games is not None
             else frozenset()
+        )
+        game_states = (
+            nfl_game_states(games, season, upcoming, now)
+            if games is not None
+            else {}
         )
         print(
             f"[{slug}]   week {upcoming} games kicked off: "
@@ -1582,6 +1884,81 @@ def build_bundle(
             if my_roster
             else None
         )
+
+        # Matchup tab (FFA-116). The opponent's optimal total reuses the
+        # lineup solver with an empty board (no add/drop search).
+        opponent_id = (upcoming_matchup or {}).get("opponent_roster_id")
+        opponent_roster = next(
+            (r for r in raw_rosters if r.get("roster_id") == opponent_id), None
+        )
+        opponent_optimal = (
+            _build_lineup(
+                snapshot.roster_positions,
+                opponent_roster,
+                valued,
+                pd.DataFrame(),
+                catalog,
+                byes,
+                upcoming,
+                season_end_week,
+                locked_teams=locked_teams,
+                live_points=_live_player_points(upcoming_raw, opponent_id),
+            )["projected_points"]
+            if opponent_roster
+            else None
+        )
+        comparison = (
+            _build_comparison(
+                season_matchup_df,
+                snapshot.teams_df,
+                {
+                    week: raw_weeks[week]
+                    for week in boundaries.regular_season_weeks
+                    if week in completed and week in raw_weeks
+                },
+                catalog,
+                season,
+                cutoff,
+                my_roster_id,
+                opponent_id,
+            )
+            if opponent_id is not None
+            else None
+        )
+        matchup = _build_matchup(
+            snapshot.roster_positions,
+            my_roster_id,
+            upcoming_raw,
+            raw_rosters,
+            snapshot.teams_df,
+            valued,
+            catalog,
+            byes,
+            game_states,
+            upcoming,
+            lineup,
+            opponent_optimal,
+            comparison,
+            # FFA-114 is calibrated from week 2 on (cutoff >= 1); week 1's
+            # preseason-only projections were never scored against results.
+            win_parameters=win_parameters if cutoff >= 1 else None,
+        )
+        if matchup:
+            mine, theirs = matchup["me"], matchup["opponent"]
+            projected = (mine["projected_total"], theirs["projected_total"])
+            live = (mine["points"], theirs["points"])
+            odds = matchup["win_probability"]
+            print(
+                f"[{slug}]   matchup week {upcoming} vs "
+                f"{matchup['opponent']['owner']}: projected "
+                f"{projected[0]:.1f}-{projected[1]:.1f} "
+                f"(live {live[0]}-{live[1]}), phase {matchup['phase']}"
+                + (f", win probability {odds['me']:.0%}" if odds else ""),
+                flush=True,
+            )
+        else:
+            print(f"[{slug}]   no matchup for week {upcoming}", flush=True)
+
         if not board.empty:
             board = board.assign(
                 week_locked=[
@@ -1658,6 +2035,7 @@ def build_bundle(
                     "rostered": rostered_count,
                 },
                 "lineup": lineup,
+                "matchup": matchup,
             }
         )
 

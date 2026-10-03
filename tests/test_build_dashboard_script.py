@@ -9,6 +9,7 @@ by unit tests.
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -780,3 +781,315 @@ def test_kicker_swap_waits_while_the_rostered_kicker_is_locked() -> None:
     lineup = _locked_lineup(board=board, projections=projections, roster=roster)
     assert lineup["add_drop"] == []
     assert lineup["slot_order"][-1] == {"slot": "K", "player_id": "kA"}
+
+
+# --------------------------------------------------------------------------
+# Matchup tab bundle wiring (FFA-116)
+# --------------------------------------------------------------------------
+
+from datetime import datetime, timezone  # noqa: E402
+
+from fantasy_analyzer.players.opponent_strength import NflGameState  # noqa: E402
+
+MATCHUP_POSITIONS = ["QB", "RB", "BN"]
+MATCHUP_WEEK = 4
+MATCHUP_TEAMS = pd.DataFrame(
+    {
+        "roster_id": [1, 2],
+        "display_name": ["me", "them"],
+        "team_name": ["Mine", "Theirs"],
+    }
+)
+MATCHUP_VALUED = pd.DataFrame(
+    [
+        {**_projection("mq", "QB", 20.0), "lineup_ppg": 20.0},
+        {**_projection("mr", "RB", 10.0), "lineup_ppg": 10.0},
+        {**_projection("mb", "RB", 14.0), "lineup_ppg": 14.0},
+        {**_projection("tq", "QB", 18.0, team="DAL"), "lineup_ppg": 18.0},
+        {**_projection("tr", "RB", 12.0, team="DAL"), "lineup_ppg": 12.0},
+    ]
+)
+MATCHUP_RAW_ROSTERS = [
+    {"roster_id": 1, "players": ["mq", "mr", "mb"], "starters": ["mq", "mr"],
+     "reserve": []},
+    {"roster_id": 2, "players": ["tq", "tr"], "starters": ["tq", "tr"],
+     "reserve": []},
+]
+MATCHUP_PAYLOAD = [
+    {"roster_id": 1, "matchup_id": 7, "points": 0.0, "starters": ["mq", "mr"],
+     "players": ["mq", "mr", "mb"], "players_points": {}},
+    {"roster_id": 2, "matchup_id": 7, "points": 0.0, "starters": ["tq", "tr"],
+     "players": ["tq", "tr"], "players_points": {}},
+]
+MATCHUP_KEYS = {
+    "week", "phase", "nfl_games", "me", "opponent", "win_probability",
+    "position_edges", "my_recommended_total", "my_recommended_gain",
+    "comparison",
+}
+SIDE_KEYS = {
+    "roster_id", "owner", "team_name", "points", "projected_total",
+    "players_remaining", "optimal_total", "starters", "bench", "alerts",
+}
+
+
+def _states(kc="scheduled", dal="scheduled"):
+    kickoff = datetime(2026, 10, 4, 17, tzinfo=timezone.utc)
+    return {
+        "KC": NflGameState("KC", "DAL", True, kickoff, kc),
+        "DAL": NflGameState("DAL", "KC", False, kickoff, dal),
+    }
+
+
+def _matchup(payload=MATCHUP_PAYLOAD, my_id=1, states=None, lineup=None,
+             rosters=MATCHUP_RAW_ROSTERS, comparison=None):
+    return build_dashboard._build_matchup(
+        MATCHUP_POSITIONS, my_id, payload, rosters, MATCHUP_TEAMS,
+        MATCHUP_VALUED, {}, {}, _states() if states is None else states,
+        MATCHUP_WEEK, {"projected_points": 33.0} if lineup is None else lineup,
+        30.0, comparison,
+    )
+
+
+def test_matchup_pre_phase_normal_pairing() -> None:
+    """Me QB 20 + RB 10 = 30 vs them 18 + 12 = 30 (all unplayed, KC at home)."""
+    result = _matchup()
+    assert set(result) == MATCHUP_KEYS
+    assert set(result["me"]) == SIDE_KEYS == set(result["opponent"])
+    assert result["phase"] == "pre"
+    assert result["nfl_games"] == {"total": 1, "kicked_off": 0, "final": 0}
+    assert result["win_probability"] is None
+    assert result["me"]["owner"] == "me"
+    assert result["opponent"]["team_name"] == "Theirs"
+    assert result["me"]["projected_total"] == pytest.approx(30.0)
+    assert result["opponent"]["projected_total"] == pytest.approx(30.0)
+    assert result["me"]["players_remaining"] == 2
+    assert result["me"]["optimal_total"] == 33.0
+    assert result["opponent"]["optimal_total"] == 30.0
+    assert [row["slot"] for row in result["me"]["starters"]] == ["QB", "RB"]
+    assert [row["player_id"] for row in result["me"]["bench"]] == ["mb"]
+    assert result["me"]["bench"][0]["slot"] == "BN"
+    assert [e["group"] for e in result["position_edges"]] == ["QB", "RB"]
+    assert result["position_edges"][0]["edge"] == pytest.approx(2.0)
+    assert result["comparison"] is None
+
+
+def test_matchup_live_phase_with_one_final_game() -> None:
+    """KC final: my starters score their live points (25.0 + 4.0)."""
+    payload = [
+        {**MATCHUP_PAYLOAD[0], "points": 29.0,
+         "players_points": {"mq": 25.0, "mr": 4.0}},
+        {**MATCHUP_PAYLOAD[1], "points": 0.0},
+    ]
+    result = _matchup(payload=payload, states=_states(kc="final", dal="final"))
+    assert result["phase"] == "live"
+    assert result["nfl_games"] == {"total": 1, "kicked_off": 1, "final": 1}
+    assert result["me"]["points"] == 29.0
+    assert result["me"]["projected_total"] == pytest.approx(29.0)
+    assert result["me"]["players_remaining"] == 0
+
+    mixed = _states(kc="in_progress", dal="in_progress")
+    live = _matchup(states=mixed)
+    assert live["phase"] == "live"
+    assert live["nfl_games"] == {"total": 1, "kicked_off": 1, "final": 0}
+
+
+def test_matchup_is_none_without_roster_matchup_or_opponent() -> None:
+    assert _matchup(my_id=None) is None
+    assert _matchup(my_id=99) is None
+    bye = [{**MATCHUP_PAYLOAD[0], "matchup_id": 8}, MATCHUP_PAYLOAD[1]]
+    assert _matchup(payload=bye) is None
+    unset = [{**MATCHUP_PAYLOAD[0], "matchup_id": None}, MATCHUP_PAYLOAD[1]]
+    assert _matchup(payload=unset) is None
+
+
+def test_matchup_payload_starters_beat_the_rosters() -> None:
+    """The roster says mq/mr start; the week's payload started mb at RB."""
+    payload = [
+        {**MATCHUP_PAYLOAD[0], "starters": ["mq", "mb"]},
+        MATCHUP_PAYLOAD[1],
+    ]
+    result = _matchup(payload=payload)
+    assert [row["player_id"] for row in result["me"]["starters"]] == ["mq", "mb"]
+    assert result["me"]["projected_total"] == pytest.approx(34.0)
+    assert [row["player_id"] for row in result["me"]["bench"]] == ["mr"]
+
+    # Missing payload lists fall back to the roster's own.
+    bare = [{"roster_id": 1, "matchup_id": 7, "points": 0.0}, MATCHUP_PAYLOAD[1]]
+    fallback = _matchup(payload=bare)
+    assert [r["player_id"] for r in fallback["me"]["starters"]] == ["mq", "mr"]
+
+
+def test_matchup_recommended_gain_arithmetic() -> None:
+    """Recommended 33.0 - projected 30.0 = +3.0; missing on either side is null."""
+    result = _matchup()
+    assert result["my_recommended_total"] == 33.0
+    assert result["my_recommended_gain"] == pytest.approx(3.0)
+
+    unsolved = _matchup(lineup={"projected_points": None})
+    assert unsolved["my_recommended_total"] is None
+    assert unsolved["my_recommended_gain"] is None
+    assert unsolved["me"]["optimal_total"] is None
+
+
+def test_matchup_has_no_nan_and_empty_slot_is_alerted() -> None:
+    payload = [{**MATCHUP_PAYLOAD[0], "starters": ["mq", "0"]}, MATCHUP_PAYLOAD[1]]
+    result = _matchup(payload=payload)
+    import json
+
+    assert "NaN" not in json.dumps(result)
+    assert result["me"]["alerts"][0]["reason"] == "Empty slot"
+    assert result["me"]["starters"][1]["player_id"] is None
+
+
+def _comparison_frames():
+    teams = pd.DataFrame(
+        {"roster_id": [1, 2], "owner_id": ["u1", "u2"],
+         "display_name": ["me", "them"], "team_name": ["Mine", "Theirs"]}
+    )
+    names = {1: "me", 2: "them"}
+    rows = [
+        {
+            "season": "2026", "week": week, "is_playoff": False,
+            "matchup_id": 1, "roster_1_id": r1, "roster_2_id": r2,
+            "owner_1": names[r1], "owner_2": names[r2],
+            "points_1": p1, "points_2": p2,
+            "winner": r1 if p1 > p2 else r2,
+            "loser": r2 if p1 > p2 else r1,
+            "is_tie": False, "margin": abs(p1 - p2),
+            "point_differential": p1 - p2,
+        }
+        for week, r1, r2, p1, p2 in ((1, 1, 2, 100.0, 90.0), (2, 2, 1, 80.0, 85.0))
+    ]
+    raw = {
+        week: [
+            {"roster_id": 1, "starters": ["mq", "mr"], "players": ["mq", "mr"],
+             "players_points": {"mq": 20.0, "mr": 10.0}},
+            {"roster_id": 2, "starters": ["tq", "tr"], "players": ["tq", "tr"],
+             "players_points": {"tq": 15.0, "tr": 8.0}},
+        ]
+        for week in (1, 2)
+    }
+    catalog = {
+        "mq": {"position": "QB", "team": "KC", "full_name": "MQ"},
+        "mr": {"position": "RB", "team": "KC", "full_name": "MR"},
+        "tq": {"position": "QB", "team": "DAL", "full_name": "TQ"},
+        "tr": {"position": "RB", "team": "DAL", "full_name": "TR"},
+    }
+    return pd.DataFrame(rows), teams, raw, catalog
+
+
+def test_comparison_is_none_before_any_completed_week() -> None:
+    matchups, teams, raw, catalog = _comparison_frames()
+    assert (
+        build_dashboard._build_comparison(
+            matchups, teams, {}, catalog, 2026, 0, 1, 2
+        )
+        is None
+    )
+
+
+def test_comparison_after_two_weeks() -> None:
+    """Me beat them 100-90 and 85-80: 2-0, 185 PF, ppg 92.5; QB 20 vs 15."""
+    import json
+
+    matchups, teams, raw, catalog = _comparison_frames()
+    result = build_dashboard._build_comparison(
+        matchups, teams, raw, catalog, 2026, 2, 1, 2
+    )
+    assert set(result) == {
+        "through_week", "me", "opponent", "positions", "head_to_head"
+    }
+    assert result["through_week"] == 2
+    assert result["me"]["roster_id"] == 1
+    assert (result["me"]["wins"], result["me"]["losses"]) == (2, 0)
+    assert result["me"]["points_for"] == pytest.approx(185.0)
+    assert result["me"]["ppg"] == pytest.approx(92.5)
+    assert result["opponent"]["roster_id"] == 2
+    assert (result["opponent"]["wins"], result["opponent"]["losses"]) == (0, 2)
+    qb = next(p for p in result["positions"] if p["position"] == "QB")
+    assert qb["me_ppg"] == pytest.approx(20.0)
+    assert qb["opponent_ppg"] == pytest.approx(15.0)
+    assert qb["me_rank"] == 1 and qb["opponent_rank"] == 2
+    h2h = result["head_to_head"]
+    assert (h2h["meetings"], h2h["wins"], h2h["losses"]) == (2, 2, 0)
+    assert [g["week"] for g in h2h["games"]] == [1, 2]
+    assert "NaN" not in json.dumps(result)
+
+
+def test_comparison_nulls_what_it_cannot_compute() -> None:
+    """One week played: weekly SD is undefined and must be null, not omitted."""
+    matchups, teams, raw, catalog = _comparison_frames()
+    result = build_dashboard._build_comparison(
+        matchups, teams, {1: raw[1]}, catalog, 2026, 1, 1, 2
+    )
+    assert "stdev_points" in result["me"]
+    assert result["me"]["stdev_points"] is None
+
+
+# --------------------------------------------------------------------------
+# Win probability on the matchup (FFA-114 wiring)
+# --------------------------------------------------------------------------
+
+from fantasy_analyzer.players.win_probability import (  # noqa: E402
+    WinProbabilityParameters,
+)
+
+
+def _win_parameters(calibrated=True):
+    return WinProbabilityParameters(
+        form="constant",
+        coefficients={"QB": 5.0, "RB": 5.0},
+        default_coefficient=5.0,
+        margin_sd_multiplier=1.2,
+        calibrated=calibrated,
+    )
+
+
+def _side_rows(rows):
+    return pd.DataFrame(rows, columns=["position", "projection", "pending"])
+
+
+def test_win_probability_block_hand_example() -> None:
+    """Me 30.0 with two pending starters, them 25.0 with one.
+
+    sd_me = sqrt(5^2 + 5^2) = 7.0711, sd_them = 5.0;
+    margin_sd = 1.2 * sqrt(50 + 25) = 10.3923;
+    P(me) = Phi(5 / 10.3923) = Phi(0.48113) = 0.68478.
+    """
+    mine = _side_rows([("QB", 20.0, True), ("RB", 10.0, True)])
+    theirs = _side_rows([("QB", 18.0, True), ("RB", 7.0, False)])
+    block = build_dashboard._win_probability_block(
+        {"projected_total": 30.0}, mine,
+        {"projected_total": 25.0}, theirs,
+        _win_parameters(),
+    )
+    assert block["me"] == pytest.approx(0.68478, abs=1e-5)
+    assert block["me"] + block["opponent"] == pytest.approx(1.0)
+    assert block["projected_margin"] == pytest.approx(5.0)
+    assert block["me_sd"] == pytest.approx(math.sqrt(50.0))
+    assert block["opponent_sd"] == pytest.approx(5.0)
+    assert block["margin_sd"] == pytest.approx(1.2 * math.sqrt(75.0))
+
+
+def test_win_probability_block_requires_calibrated_parameters() -> None:
+    mine = _side_rows([("QB", 20.0, True)])
+    args = ({"projected_total": 20.0}, mine, {"projected_total": 10.0}, mine)
+    assert build_dashboard._win_probability_block(*args, None) is None
+    assert (
+        build_dashboard._win_probability_block(
+            *args, _win_parameters(calibrated=False)
+        )
+        is None
+    )
+
+
+def test_matchup_carries_win_probability_when_calibrated() -> None:
+    """30 vs 30 with symmetric pending variance is a coin flip."""
+    result = build_dashboard._build_matchup(
+        MATCHUP_POSITIONS, 1, MATCHUP_PAYLOAD, MATCHUP_RAW_ROSTERS,
+        MATCHUP_TEAMS, MATCHUP_VALUED, {}, {}, _states(), MATCHUP_WEEK,
+        {"projected_points": 33.0}, 30.0, None,
+        win_parameters=_win_parameters(),
+    )
+    assert result["win_probability"]["me"] == pytest.approx(0.5)
+    assert result["win_probability"]["me_sd"] == pytest.approx(math.sqrt(50.0))

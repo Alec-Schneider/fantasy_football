@@ -371,33 +371,12 @@ workflow and the published URL.
   not the positional mean. `WAIVER_QUALITY_FILTER` and `RAW_WAIVER_DEPTH`
   were removed from `build_dashboard.py`.
 
-## READY — found while building the dashboard, measured, not yet fixed
-
-- **FFA-103** — Exclude teamless players from the free-agent pool.
-  Sleeper marks unsigned NFL free agents `status: "Active"` with
-  `team: None`, and `DEFAULT_EXCLUDED_STATUSES` covers only
-  `{inactive, retired}`. A `team.notna()` guard in `build_free_agent_pool`
-  fixes it.
-- **FFA-107** — Injury awareness in `roster_fit`.
-  `optimal_lineup`/`build_add_drop_candidates` are projection-only and will
-  start a player who is Out or on a bye — measured on a real roster, where
-  two Out players placed in the recommended starting eleven.
-  `build_dashboard.py` filters them via `UNAVAILABLE_INJURY_STATUSES` before
-  solving; that belongs in the package, alongside the `bye_week` column
-  FFA-099 already produces.
-- **FFA-108** — `_completed_weeks` calls a week complete before it is.
-  `scripts/build_dashboard.py`'s rule is "every contested pairing has
-  non-null, non-zero points on both sides", which a week still missing its
-  Monday night game satisfies — every team already has *some* points.
-  Measured on 2026-09-21: the page published week 2 as final before MNF,
-  and **two games carried the wrong winner** (NWC JuniataGangsta/Philjitsu,
-  Zipline MarkVanc/rjbaxendale10), which propagated into standings, power
-  rankings and the written recaps. The already-cached nflverse schedule is
-  an exact signal — `.cache/nflverse/games.csv` had 16/16 week-2 games
-  scored once MNF landed, against 0/16 for week 3 — so the fix is to
-  require every scheduled game in the week to carry a result before the
-  week counts. Until then `docs/dashboard.md`'s "refresh on Tuesday"
-  instruction is load-bearing rather than advisory.
+- **FFA-103** — Teamless players — DONE — the free-agent half of
+  `build_player_universe` requires an NFL team (`require_nfl_team`).
+- **FFA-107** — Injury/bye awareness — DONE — `players/availability.py`;
+  the lineup and the add/drop horizon honor it.
+- **FFA-108** — Week completeness — DONE — a week is final only once every
+  scheduled NFL game has a score (`completed_nfl_weeks`).
 
 Known follow-ups, none blocking:
 
@@ -407,24 +386,60 @@ Known follow-ups, none blocking:
 - The three caches (`sleeper/players.json`, `nflverse/player_stats_<season>.csv`,
   `id_crosswalk/db_playerids.csv`) are still never TTL-checked. A stale
   catalog silently produces wrong teams and injury statuses.
-- No D/ST projection at any stage: nflverse's weekly player stats carry no
-  team-defense rows, so every board omits the position entirely.
-- FFA-100 has no bye-week or injury awareness on the drop side; it names
-  the column to cross-reference (`bye_week`, from FFA-099) rather than
-  applying it.
+
+---
+
+# Epic 11 — Matchup Tab
+
+All tickets are DONE. This epic added a Matchup tab, now the default, for
+the week being played:
+
+- my Sleeper-set lineup against my opponent's, slot by slot, with live
+  points and projected finals
+- a calibrated win probability
+- positional edges, lineup alerts, and a season-to-date comparison.
+
+The design and the bundle contract are in `docs/matchup_tab.md`. The
+user-facing description is in `docs/dashboard.md` under "The Matchup tab".
+
+- **FFA-113** — Matchup lineup projection — DONE — `nfl_game_states`
+  (`players/opponent_strength.py`) and `players/matchup_projection.py`.
+- **FFA-114** — Win probability — DONE — `players/win_probability.py`,
+  fitted by `scripts/fit_win_probability.py`. The SD is `c_pos * sqrt(proj)`,
+  summed over pending starters, with `lambda` 0.987. On 203 games from the
+  three leagues' 2025 seasons it scores Brier 0.234 against a coin flip's
+  0.250. `lambda` is weakly identified (bootstrap 0.61–1.85). The results
+  are in `docs/win-probability.md`. The parameters file lives in the
+  gitignored `.cache/nflverse/`, so rerun the script if the projection
+  pipeline changes.
+- **FFA-115** — Matchup comparison — DONE — `analytics/matchup_preview.py`
+  and `build_sleeper_scored_player_weeks` (`players/player_week.py`).
+- **FFA-116** — Bundle wiring — DONE — the `matchup` key in
+  `scripts/build_dashboard.py`. The win probability is published only from
+  calibrated parameters and only from week 2 on.
+- **FFA-117** — Matchup tab page — DONE — `dashboard.html.tpl`.
+- **FFA-118** — Docs and board — DONE.
+
+Follow-ups, none blocking:
+
+- All-time head-to-head across seasons via `previous_league_id`.
+- Box scores for past weeks on the Season tab, from Sleeper's
+  `starters_points`.
+- The win probability is uncalibrated for week 1 and for games in progress.
+  A game in progress is scored at its live points, which overstates
+  certainty mid-game.
 
 ---
 
 # Current Kanban Board
 
+## IN PROGRESS
+
+None.
+
 ## READY
 
-- **FFA-103** — Exclude teamless players from the free-agent pool.
-- **FFA-107** — Injury/bye awareness in `roster_fit`.
-- **FFA-108** — `_completed_weeks` calls a week complete before its Monday
-  night game; published two wrong winners on 2026-09-21.
-
-All three are measured and described under Epic 10 above.
+None.
 
 ---
 
@@ -433,12 +448,6 @@ All three are measured and described under Epic 10 above.
 None.
 
 Tickets become READY when their dependencies are complete and reviewed.
-
----
-
-## IN PROGRESS
-
-None.
 
 ---
 
