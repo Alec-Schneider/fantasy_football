@@ -116,6 +116,7 @@ What this module does not do
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
@@ -333,6 +334,91 @@ def completed_nfl_weeks(schedule: pd.DataFrame, season: int) -> list[int]:
     return sorted(int(week) for week, done in scored.items() if done)
 
 
+@dataclass(frozen=True)
+class NflGameState:
+    """One team's regular-season game in a week, and how far along it is."""
+
+    team: str
+    opponent: str
+    is_home: bool
+    kickoff: Optional[datetime]
+    state: str
+
+
+def nfl_game_states(
+    schedule: pd.DataFrame, season: int, week: int, now: datetime
+) -> dict[str, NflGameState]:
+    """Each team's ``week`` game and its state as of ``now`` (FFA-113).
+
+    ``state`` is ``"final"`` when both ``home_score`` and ``away_score``
+    are present, else ``"in_progress"`` when the kickoff -- ``gameday``
+    plus ``gametime``, which nflverse states in US Eastern time -- is at
+    or before ``now``, else ``"scheduled"``. A game with no parseable
+    kickoff and no score is therefore ``"scheduled"``.
+
+    Regular season only, matching :func:`completed_nfl_weeks`. One entry
+    per team per game (both the home and the away side). **A team absent
+    from the result has no game that week -- a bye.** An empty result
+    (empty or incomplete schedule) is indistinguishable from "every team
+    on a bye", so callers treat it as "no schedule information".
+
+    Args:
+        schedule: nflverse's one-row-per-game table (the ``games`` input to
+            :func:`normalize_schedule`, not its output).
+        season: The season to inspect.
+        week: The NFL week to inspect.
+        now: The moment to judge kickoffs against. Must be timezone-aware.
+
+    Returns:
+        ``team -> NflGameState``, teams in nflverse spelling (compare a
+        Sleeper team through :func:`normalize_team`).
+
+    Raises:
+        ValueError: If ``now`` is naive.
+    """
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    required = {"season", "week", "home_team", "away_team"}
+    if schedule.empty or not required <= set(schedule.columns):
+        return {}
+
+    games = schedule[(schedule["season"] == season) & (schedule["week"] == week)]
+    if "game_type" in games.columns:
+        games = games[games["game_type"] == "REG"]
+    if games.empty:
+        return {}
+
+    final = pd.Series(False, index=games.index)
+    if {"home_score", "away_score"} <= set(games.columns):
+        final = (
+            pd.to_numeric(games["home_score"], errors="coerce").notna()
+            & pd.to_numeric(games["away_score"], errors="coerce").notna()
+        )
+    kickoffs = pd.Series(pd.NaT, index=games.index, dtype="datetime64[ns]")
+    if {"gameday", "gametime"} <= set(games.columns):
+        kickoffs = pd.to_datetime(
+            games["gameday"].astype(str) + " " + games["gametime"].astype(str),
+            errors="coerce",
+        ).dt.tz_localize(EASTERN_TIME, ambiguous="NaT", nonexistent="NaT")
+
+    stamp = pd.Timestamp(now)
+    states: dict[str, NflGameState] = {}
+    for index, home, away in zip(
+        games.index, games["home_team"], games["away_team"]
+    ):
+        kickoff_ts = kickoffs.loc[index]
+        kickoff = None if pd.isna(kickoff_ts) else kickoff_ts.to_pydatetime()
+        if bool(final.loc[index]):
+            state = "final"
+        elif kickoff is not None and kickoff_ts <= stamp:
+            state = "in_progress"
+        else:
+            state = "scheduled"
+        states[home] = NflGameState(home, away, True, kickoff, state)
+        states[away] = NflGameState(away, home, False, kickoff, state)
+    return states
+
+
 def started_nfl_teams(
     schedule: pd.DataFrame, season: int, week: int, now: datetime
 ) -> frozenset[str]:
@@ -344,8 +430,8 @@ def started_nfl_teams(
     is locked, and this is that set.
 
     A game counts as started if it has a final score (both ``home_score``
-    and ``away_score``) or if its kickoff -- ``gameday`` plus ``gametime``,
-    which nflverse states in US Eastern time -- is at or before ``now``.
+    and ``away_score``) or if its kickoff is at or before ``now`` -- i.e.
+    its :func:`nfl_game_states` state is ``"in_progress"`` or ``"final"``.
     The score test alone would miss a game in progress; the kickoff test
     alone would depend on the cached schedule's times never being stale.
 
@@ -366,33 +452,11 @@ def started_nfl_teams(
     Raises:
         ValueError: If ``now`` is naive.
     """
-    if now.tzinfo is None:
-        raise ValueError("now must be timezone-aware")
-    required = {"season", "week", "home_team", "away_team"}
-    if schedule.empty or not required <= set(schedule.columns):
-        return frozenset()
-
-    games = schedule[(schedule["season"] == season) & (schedule["week"] == week)]
-    if "game_type" in games.columns:
-        games = games[games["game_type"] == "REG"]
-    if games.empty:
-        return frozenset()
-
-    started = pd.Series(False, index=games.index)
-    if {"home_score", "away_score"} <= set(games.columns):
-        started |= (
-            pd.to_numeric(games["home_score"], errors="coerce").notna()
-            & pd.to_numeric(games["away_score"], errors="coerce").notna()
-        )
-    if {"gameday", "gametime"} <= set(games.columns):
-        kickoff = pd.to_datetime(
-            games["gameday"].astype(str) + " " + games["gametime"].astype(str),
-            errors="coerce",
-        ).dt.tz_localize(EASTERN_TIME, ambiguous="NaT", nonexistent="NaT")
-        started |= kickoff.notna() & (kickoff <= pd.Timestamp(now))
-
-    games = games[started]
-    return frozenset(games["home_team"]) | frozenset(games["away_team"])
+    return frozenset(
+        team
+        for team, game in nfl_game_states(schedule, season, week, now).items()
+        if game.state in ("in_progress", "final")
+    )
 
 
 def build_defense_vs_position(
